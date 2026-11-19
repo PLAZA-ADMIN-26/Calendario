@@ -291,7 +291,7 @@ const firebaseConfig = {
    cosi' la pagina mostra sempre un messaggio chiaro invece di restare bianca. */
 const configured = !!firebaseConfig.apiKey && !String(firebaseConfig.apiKey).startsWith("INCOLLA");
 let loadError = "";
-let initializeApp, getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile, sendPasswordResetEmail,
+let initializeApp, getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile, sendPasswordResetEmail, signInAnonymously,
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, onSnapshot, setDoc, updateDoc, addDoc, deleteDoc, writeBatch,
   query, orderBy, limit, serverTimestamp;
 if (configured) {
@@ -299,7 +299,7 @@ if (configured) {
     const B = "https://www.gstatic.com/firebasejs/10.14.1/";
     const [a, au, fs] = await Promise.all([import(B + "firebase-app.js"), import(B + "firebase-auth.js"), import(B + "firebase-firestore.js")]);
     ({ initializeApp } = a);
-    ({ getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile, sendPasswordResetEmail } = au);
+    ({ getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile, sendPasswordResetEmail, signInAnonymously } = au);
     ({ initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, onSnapshot, setDoc, updateDoc, addDoc, deleteDoc, writeBatch, query, orderBy, limit, serverTimestamp } = fs);
   } catch (e) { loadError = "Impossibile caricare Firebase (controlla la connessione): " + (e && e.message ? e.message : e); }
 }
@@ -632,11 +632,11 @@ function viewAccount() {
   const initials = (S.name || "?").trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   let h = `<div class="page-h"><h1>Account</h1></div>`;
   h += S.user
-    ? `<section class="card"><div class="who"><div class="avatar lg">${esc(initials)}</div><div><b>${esc(S.name)}</b><div class="muted small">${esc(S.user.email)}</div></div>
+    ? `<section class="card"><div class="who"><div class="avatar lg">${esc(initials)}</div><div><b>${esc(S.name)}</b><div class="muted small">${S.user.email ? esc(S.user.email) : "Accesso con codice"}</div></div>
         <span class="pill ${isRep() ? "rep" : ""}">${isRep() ? "Rappresentante" : "Studente"}</span></div>
        ${!isRep() ? `<div class="claim"><label>Sei un rappresentante di classe?<div class="inline"><input id="claimcode" placeholder="Codice rappresentante" autocomplete="off"><button class="btn" data-action="claim">Attiva</button></div></label></div>` : ""}
-       <button class="btn" data-action="logout">Esci</button></section>`
-    : `<section class="card"><h3>Stai navigando come ospite</h3><p class="muted" style="margin:6px 0 14px">Puoi consultare tutto il calendario. Accedi per essere riconosciuto come studente o rappresentante.</p><button class="btn primary" data-action="auth">Accedi o registrati</button></section>`;
+       <button class="btn" data-action="logout">Esci</button>${S.user.isAnonymous ? '<p class="muted small" style="margin-top:8px">Se esci o cancelli i dati del browser, dovrai reinserire il codice.</p>' : ""}</section>`
+    : `<section class="card"><h3>Sei un rappresentante di classe?</h3><p class="muted" style="margin:6px 0 12px">Gli studenti non devono fare nulla: il calendario si consulta senza accedere. Se sei un rappresentante, scrivi il tuo nome e il codice per poter modificare.</p><div class="form"><label>Il tuo nome<input id="repname" maxlength="60" autocomplete="name" placeholder="Es. Giulia"></label><label>Codice rappresentante<div class="inline"><input id="repcode" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="btn primary" data-action="repenter">Entra</button></div></label></div></section>`;
   const notifOk = "Notification" in window;
   h += `<section class="card"><h3 style="margin-bottom:10px">Preferenze</h3>
     <div class="seg">${[["light", "Chiaro"], ["dark", "Scuro"], ["auto", "Automatico"]].map(([k, l]) => `<button class="${mode === k ? "on" : ""}" data-action="settheme" data-v="${k}">${l}</button>`).join("")}</div>
@@ -741,7 +741,7 @@ function listen() {
     S.user = user;
     unsubProfile?.(); unsubProfile = null;
     if (!user) { S.role = "student"; S.name = ""; S.hasProfile = false; render(); return; }
-    S.name = user.displayName || user.email.split("@")[0];
+    S.name = user.displayName || (user.email ? user.email.split("@")[0] : "Rappresentante");
     unsubProfile = onSnapshot(doc(db, "users", user.uid), (d) => {
       S.hasProfile = d.exists();
       S.role = d.exists() && d.data().role === "rep" ? "rep" : "student";
@@ -1155,6 +1155,24 @@ const actions = {
     const email = $("#authform [name=email]")?.value.trim();
     if (!email) { $("#autherr").textContent = "Scrivi prima la tua email."; return; }
     try { await sendPasswordResetEmail(auth, email); toast("Email per il reset inviata"); } catch (err) { $("#autherr").textContent = authMsg(err); }
+  },
+  repenter: async (el) => {
+    const code = $("#repcode")?.value.trim(), name = ($("#repname")?.value.trim() || "Rappresentante").slice(0, 60);
+    if (!code) { toast("Inserisci il codice."); return; }
+    if (auth.currentUser) { toast("Sei già connesso."); return; }
+    el.disabled = true;
+    let uid = null;
+    try {
+      uid = (await signInAnonymously(auth)).user.uid;
+      await setDoc(doc(db, "users", uid), { displayName: name, role: "student", createdAt: serverTimestamp() });
+      await updateDoc(doc(db, "users", uid), { role: "rep", repCode: code });
+      toast("Ora sei rappresentante.");
+    } catch (err) {
+      console.error(err);
+      toast(err?.code === "auth/operation-not-allowed" ? "Manca l'accesso anonimo in Firebase (Authentication > Sign-in method > Anonymous)." : "Codice non valido.");
+      if (uid) { try { await auth.currentUser.delete(); } catch { try { await signOut(auth); } catch {} } }
+      el.disabled = false;
+    }
   },
   logout: async () => { await signOut(auth); toast("Disconnesso"); },
   claim: async () => {
