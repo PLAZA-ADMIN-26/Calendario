@@ -165,6 +165,27 @@ label input,label select,label textarea{color:var(--text);font-weight:400}
 .lg,.desk{display:none}
 @media(min-width:700px){.lg{display:inline}.desk{display:inline-flex}}
 .daypanel{margin-top:16px}
+.loadgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+.lcol{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 2px 10px;border-radius:12px;border:1px solid var(--border);background:var(--surface);cursor:pointer;min-height:104px;transition:background .12s}
+.lcol:hover{background:var(--surface-2)}
+.lcol.today{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.lcol.heavy{border-color:var(--danger);border-width:2px;padding:7px 1px 9px;background:color-mix(in srgb,var(--danger) 9%,var(--surface))}
+.lcol.we{opacity:.65}
+.ld{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:600}
+.ln{font-weight:700;font-size:15px}
+.lblocks{display:flex;flex-direction:column;gap:3px;width:100%;padding:0 6px;margin-top:2px}
+.lblocks i{display:block;height:6px;border-radius:3px;background:var(--c)}
+.lblocks i.s{height:12px;border-radius:4px}
+.lcount{font-size:11px;color:var(--muted);font-weight:600}
+.loadmsg{margin-top:10px;font-size:13.5px;color:var(--muted);display:flex;gap:7px;align-items:flex-start}
+.loadmsg:empty{display:none}
+.loadmsg.warn{color:var(--danger);font-weight:600}
+.loadmsg .ic{margin-top:2px}
+.implist{max-height:52dvh;overflow:auto;border-top:1px solid var(--border)}
+.improw{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;padding:10px 0;border-bottom:1px solid var(--border);align-items:start}
+.improw input[type=checkbox]{margin-top:3px}
+.improw .row2{grid-column:2}
+.improw select{min-height:36px;padding:5px 8px;font-size:13px}
 .week{display:grid;gap:10px}
 .daycol{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:10px;min-height:70px}
 .daycol.today{border-color:var(--accent)}
@@ -323,6 +344,7 @@ const ms = (t) => (t && t.toMillis ? t.toMillis() : typeof t === "number" ? t : 
 const groupBy = (list) => list.reduce((m, e) => ((m[e.date] ||= []).push(e), m), {});
 const byDay = (a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || "") || a.title.localeCompare(b.title);
 // Verifiche e interrogazioni per prime (l'ordine cronologico resta quello di partenza).
+const timeRange = (e) => (e.time ? (e.endTime ? `${e.time}–${e.endTime}` : e.time) : "");
 const strongFirst = (a, b) => (TYPES[b.type]?.strong ? 1 : 0) - (TYPES[a.type]?.strong ? 1 : 0);
 const rel = (d) => {
   const n = diffDays(d, todayStr());
@@ -411,7 +433,7 @@ const isRep = () => S.role === "rep" && !!S.user;
 const subj = (id) => S.subjects.find((s) => s.id === id) || { id: "", name: "Senza materia", abbr: "", color: "#8a8f98" };
 const mapDocs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: "estimate" }) }));
 const evData = (e) => ({
-  title: e.title, subjectId: e.subjectId || "", type: e.type, date: e.date, time: e.time || "",
+  title: e.title, subjectId: e.subjectId || "", type: e.type, date: e.date, time: e.time || "", endTime: e.endTime || "",
   description: e.description || "", topics: e.topics || "", notes: e.notes || "", links: e.links || [],
 });
 
@@ -467,11 +489,11 @@ function ask(title, text, okLabel = "Elimina") {
 /* ================= componenti ================= */
 function evRow(e, side = "time") {
   const s = subj(e.subjectId), t = TYPES[e.type] || TYPES.altro;
-  const right = side === "date" ? `${esc(short(e.date))}<small>${rel(e.date)}</small>` : esc(e.time || "");
+  const right = side === "date" ? `${esc(short(e.date))}<small>${rel(e.date)}</small>` : esc(timeRange(e));
   return `<div class="ev ${t.strong ? "strong" : ""}" style="--c:${s.color}" role="button" tabindex="0" data-action="open" data-id="${e.id}" ${isRep() ? 'draggable="true" data-drag' : ""}>
     <span class="bar"></span>
     <span class="ev-main"><span class="ev-title">${ic(t.icon, 16)}<span>${esc(e.title)}</span></span>
-    <span class="ev-meta">${esc(s.name)} · ${t.label}${e.time ? ` · ${esc(e.time)}` : ""}</span></span>
+    <span class="ev-meta">${esc(s.name)} · ${t.label}${e.time ? ` · ${esc(timeRange(e))}` : ""}</span></span>
     <span class="ev-side ${e.date === todayStr() ? "now" : ""}">${right}</span></div>`;
 }
 const chip = (e) => {
@@ -481,6 +503,7 @@ const chip = (e) => {
 const empty = (icon, text) => `<div class="empty">${ic(icon, 28)}<p>${esc(text)}</p></div>`;
 
 function logText(l) {
+  if (l.details?.import) return { icon: "plus", text: `Importati ${l.details.import} eventi dal calendario` };
   const t = TYPES[l.type]?.label || "Evento";
   const s = l.subjectId ? subj(l.subjectId).name : "";
   const title = `“${l.title}”`;
@@ -490,8 +513,8 @@ function logText(l) {
     return { icon: "cal", text: `Spostato ${title}${d ? ` dal ${short(d.from)} al ${short(d.to)}` : ""}` };
   }
   if (l.action === "deleted") return { icon: "trash", text: `Eliminato ${title} (era previsto il ${short(l.date)})` };
-  const names = { title: "titolo", time: "orario", type: "tipologia", subject: "materia", content: "dettagli", links: "allegati" };
-  const f = Object.keys(l.details || {}).map((k) => names[k]).filter(Boolean);
+  const names = { title: "titolo", time: "orario", endTime: "orario", type: "tipologia", subject: "materia", content: "dettagli", links: "allegati" };
+  const f = [...new Set(Object.keys(l.details || {}).map((k) => names[k]).filter(Boolean))];
   return { icon: "edit", text: `Modificato ${title}${f.length ? ` (${f.join(", ")})` : ""}` };
 }
 const logRow = (l) => {
@@ -500,6 +523,40 @@ const logRow = (l) => {
 };
 
 /* ================= viste ================= */
+/* ===== carico della settimana ===== */
+function loadCard() {
+  const t = todayStr(), off = S.loadWeek || 0, ws = addDays(mondayOf(t), 7 * off), map = groupBy(S.events);
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = addDays(ws, i), evs = [...(map[d] || [])].sort(strongFirst);
+    return { d, evs, strong: evs.filter((e) => TYPES[e.type]?.strong).length };
+  });
+  const heavy = days.filter((x) => x.strong >= 2);
+  const total = days.reduce((n, x) => n + x.evs.length, 0), tests = days.reduce((n, x) => n + x.strong, 0);
+  let msg;
+  if (heavy.length) msg = `<p class="loadmsg warn">${ic("bell", 15)} ${heavy.map((x) => `${cap(fmt(x.d, { weekday: "long" }))}: ${x.strong} tra verifiche e interrogazioni`).join(" · ")}</p>`;
+  else if (tests) msg = `<p class="loadmsg">${tests} ${tests === 1 ? "verifica o interrogazione" : "tra verifiche e interrogazioni"}, mai più di una al giorno.</p>`;
+  else msg = `<p class="loadmsg">${total ? `${total} ${total === 1 ? "impegno" : "impegni"}, nessuna verifica.` : "Settimana libera: nessun impegno."}</p>`;
+  return `<div class="sec-title">Carico della settimana</div>
+  <section class="card"><div class="card-h"><div class="seg sm"><button class="${off === 0 ? "on" : ""}" data-action="loadw" data-v="0">Questa</button><button class="${off === 1 ? "on" : ""}" data-action="loadw" data-v="1">Prossima</button></div>
+    <span class="muted small">${esc(fmt(ws, { day: "numeric", month: "short" }))} – ${esc(fmt(addDays(ws, 6), { day: "numeric", month: "short" }))}</span></div>
+  <div class="loadgrid">${days.map((x, i) => `<button class="lcol ${x.d === t ? "today" : ""} ${x.strong >= 2 ? "heavy" : ""} ${i > 4 ? "we" : ""}" data-action="goday" data-date="${x.d}" aria-label="${esc(longDate(x.d))}: ${x.evs.length} impegni">
+    <span class="ld">${esc(fmt(x.d, { weekday: "short" }).slice(0, 3))}</span><span class="ln">${parse(x.d).getDate()}</span>
+    <span class="lblocks">${x.evs.slice(0, 5).map((e) => `<i class="${TYPES[e.type]?.strong ? "s" : ""}" style="--c:${subj(e.subjectId).color}"></i>`).join("")}</span>
+    ${x.evs.length > 5 ? `<span class="lcount">+${x.evs.length - 5}</span>` : ""}</button>`).join("")}</div>${msg}</section>`;
+}
+function updateLoadHint(form) {
+  const box = $("#loadhint");
+  if (!form || !box) return;
+  const date = form.elements.date?.value, type = form.elements.type?.value;
+  let html = "";
+  if (date && TYPES[type]?.strong) {
+    const others = S.events.filter((e) => e.date === date && TYPES[e.type]?.strong && e.id !== form.dataset.id);
+    if (others.length) html = `${ic("bell", 15)} Quel giorno c'è già: ${others.map((e) => `${esc(TYPES[e.type].label)} di ${esc(subj(e.subjectId).name)}`).join(", ")}.`;
+  }
+  box.innerHTML = html;
+  box.classList.toggle("warn", !!html);
+}
+
 function viewHome() {
   const t = todayStr();
   const today = S.events.filter((e) => e.date === t).sort(byDay);
@@ -514,7 +571,7 @@ function viewHome() {
     nextCard = `<section class="card next" style="--c:${s.color}" role="button" tabindex="0" data-action="open" data-id="${next.id}">
       <div class="count"><b>${n === 0 ? "Oggi" : n}</b>${n === 0 ? "" : `<span>${n === 1 ? "giorno" : "giorni"}</span>`}</div>
       <div><span class="eyebrow">Prossima ${TYPES[next.type].label.toLowerCase()}</span><h3>${esc(next.title)}</h3>
-      <p class="muted">${esc(s.name)} · ${cap(fmt(next.date, { weekday: "long", day: "numeric", month: "long" }))}${next.time ? ` · ${esc(next.time)}` : ""}</p></div></section>`;
+      <p class="muted">${esc(s.name)} · ${cap(fmt(next.date, { weekday: "long", day: "numeric", month: "long" }))}${next.time ? ` · ${esc(timeRange(next))}` : ""}</p></div></section>`;
   } else {
     nextCard = `<section class="card next none">${ic("check", 22)}<p>Nessuna verifica o interrogazione in programma.</p></section>`;
   }
@@ -523,6 +580,7 @@ function viewHome() {
   ${imp ? `<section class="card banner">${ic("bell", 20)}<div><span class="eyebrow">Comunicazione importante</span><h3>${esc(imp.title)}</h3>${imp.body ? `<p>${esc(imp.body)}</p>` : ""}</div></section>` : ""}
   <div class="grid2"><div>
     ${nextCard}
+    ${loadCard()}
     <div class="sec-title">Oggi</div>
     ${today.length ? today.map((e) => evRow(e)).join("") : empty("check", "Nessun impegno per oggi.")}
     <div class="sec-title">Prossimi impegni <button data-action="nav" data-view="cal">Calendario completo</button></div>
@@ -656,7 +714,7 @@ function repArea() {
   const soon = S.events.filter((e) => e.date >= t && e.date <= week).length;
   return `<section class="card"><div class="card-h"><h3>Area rappresentanti</h3></div>
     <div class="stats"><div class="stat"><b>${S.events.length}</b><span>eventi totali</span></div><div class="stat"><b>${soon}</b><span>nei prossimi 7 giorni</span></div><div class="stat"><b>${tests}</b><span>verifiche e interrogazioni</span></div></div>
-    <div class="list-actions" style="margin:0 0 18px"><button class="btn primary" data-action="new">${ic("plus", 16)} Nuovo evento</button><button class="btn" data-action="newann">${ic("bell", 16)} Nuova comunicazione</button></div>
+    <div class="list-actions" style="margin:0 0 18px"><button class="btn primary" data-action="new">${ic("plus", 16)} Nuovo evento</button><button class="btn" data-action="newann">${ic("bell", 16)} Nuova comunicazione</button><button class="btn" data-action="impopen">${ic("download", 16)} Importa da Google Calendar</button></div>
     <h3 style="margin-bottom:10px">Materie</h3>
     ${S.subjects.map((s) => `<div class="subj-row" data-sid="${s.id}"><input type="color" value="${esc(s.color)}" data-sf="color" aria-label="Colore"><input data-sf="name" value="${esc(s.name)}" maxlength="60" aria-label="Nome"><input class="abbr" data-sf="abbr" value="${esc(s.abbr || "")}" maxlength="8" placeholder="Abbr." aria-label="Abbreviazione"><button class="icon-btn" data-action="delsubj" data-id="${s.id}" aria-label="Elimina materia">${ic("trash", 17)}</button></div>`).join("")}
     <div class="list-actions" style="margin-top:6px"><button class="btn sm" data-action="addsubj">${ic("plus", 15)} Aggiungi materia</button>${S.subjects.length ? "" : `<button class="btn sm" data-action="seed">Aggiungi le materie di esempio</button>`}</div>
@@ -754,7 +812,7 @@ function listen() {
 /* ================= scrittura eventi (con storico) ================= */
 function diffEvents(o, n) {
   const d = {};
-  for (const k of ["date", "time", "title", "type"]) if ((o[k] || "") !== (n[k] || "")) d[k] = { from: o[k] || "", to: n[k] || "" };
+  for (const k of ["date", "time", "endTime", "title", "type"]) if ((o[k] || "") !== (n[k] || "")) d[k] = { from: o[k] || "", to: n[k] || "" };
   if ((o.subjectId || "") !== (n.subjectId || "")) d.subject = true;
   if ((o.description || "") !== n.description || (o.topics || "") !== n.topics || (o.notes || "") !== n.notes) d.content = true;
   if (JSON.stringify(o.links || []) !== JSON.stringify(n.links || [])) d.links = true;
@@ -806,7 +864,7 @@ function eventDetail(id) {
   openModal(`<div class="detail" style="--c:${s.color}">
     <div class="sheet-h"><span class="tag"><i></i>${esc(s.name)}</span><button class="icon-btn" data-action="closemodal" aria-label="Chiudi">${ic("x")}</button></div>
     <h2>${esc(e.title)}</h2><p class="meta">${ic(t.icon, 16)} ${t.label}</p>
-    <div class="facts"><div>${ic("cal", 16)} ${longDate(e.date)}</div>${e.time ? `<div>${ic("clock", 16)} ${esc(e.time)}</div>` : ""}<div>${rel(e.date)}</div></div>
+    <div class="facts"><div>${ic("cal", 16)} ${longDate(e.date)}</div>${e.time ? `<div>${ic("clock", 16)} ${esc(timeRange(e))}</div>` : ""}<div>${rel(e.date)}</div></div>
     ${block("Descrizione", e.description)}${block("Argomenti da preparare", e.topics)}${block("Note", e.notes)}
     ${links.length ? `<section><h4>Allegati e link</h4>${links.map((l) => `<a class="linkchip" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${ic("link", 14)}${esc(l.label)}</a>`).join("")}</section>` : ""}
     <div class="sheet-f wrap"><a class="btn sm" href="${esc(gcalUrl(e))}" target="_blank" rel="noopener noreferrer">${ic("cal", 15)} Google Calendar</a>
@@ -826,13 +884,15 @@ function eventForm(ev, presetDate) {
       <label>Materia<select name="subjectId"><option value="">— Nessuna —</option>${S.subjects.map((s) => `<option value="${s.id}" ${e.subjectId === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
       <label>Tipologia<select name="type">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}" ${e.type === k ? "selected" : ""}>${v.label}</option>`).join("")}</select></label>
     </div>
-    <div class="row2"><label>Data<input type="date" name="date" required value="${esc(e.date)}"></label><label>Orario (facoltativo)<input type="time" name="time" value="${esc(e.time || "")}"></label></div>
+    <label>Data<input type="date" name="date" required value="${esc(e.date)}"></label>
+    <div class="row2"><label>Dalle ore (facoltativo)<input type="time" name="time" value="${esc(e.time || "")}"></label><label>Alle ore (facoltativo)<input type="time" name="endTime" value="${esc(e.endTime || "")}"></label></div>
+    <div id="loadhint" class="loadmsg"></div>
     <label>Descrizione<textarea name="description" rows="2">${esc(e.description)}</textarea></label>
     <label>Argomenti da preparare<textarea name="topics" rows="2">${esc(e.topics)}</textarea></label>
     <label>Note aggiuntive<textarea name="notes" rows="2">${esc(e.notes)}</textarea></label>
     <fieldset><legend>Allegati e link</legend><div id="links">${(e.links || []).map(linkRow).join("")}</div><button type="button" class="btn sm" data-action="addlink">${ic("plus", 15)} Aggiungi link</button></fieldset>
     <div class="sheet-f">${ev ? `<button type="button" class="btn danger" data-action="del" data-id="${ev.id}">${ic("trash", 16)} Elimina</button>` : ""}<span class="spacer"></span><button type="button" class="btn" data-action="closemodal">Annulla</button><button class="btn primary" type="submit">Salva</button></div>
-  </form>`);
+  </form>`, (sheet) => updateLoadHint(sheet.querySelector("#evform")));
 }
 
 async function submitEvent(form) {
@@ -848,9 +908,11 @@ async function submitEvent(form) {
   });
   const data = {
     title: String(fd.get("title")).trim(), subjectId: fd.get("subjectId") || "", type: fd.get("type"), date: fd.get("date"),
-    time: fd.get("time") || "", description: String(fd.get("description")).trim(), topics: String(fd.get("topics")).trim(), notes: String(fd.get("notes")).trim(), links,
+    time: fd.get("time") || "", endTime: fd.get("endTime") || "", description: String(fd.get("description")).trim(), topics: String(fd.get("topics")).trim(), notes: String(fd.get("notes")).trim(), links,
   };
   if (!data.title || !data.date) return;
+  if (data.endTime && !data.time) data.endTime = "";
+  if (data.endTime && data.endTime <= data.time) { toast("L'ora di fine deve essere dopo quella di inizio."); return; }
   btn.disabled = true;
   try {
     await saveEvent(form.dataset.id || null, data);
@@ -926,6 +988,7 @@ async function submitAuth(form) {
 const ymd = (d) => d.replaceAll("-", "");
 function endStamp(e) {
   if (!e.time) return ymd(addDays(e.date, 1));
+  if (e.endTime && e.endTime > e.time) return ymd(e.date) + "T" + e.endTime.replace(":", "") + "00";
   const [h, m] = e.time.split(":").map(Number);
   return ymd(e.date) + "T" + (h >= 23 ? "235900" : pad(h + 1) + pad(m) + "00");
 }
@@ -1025,7 +1088,7 @@ function buildMonthPdf(JsPDF, cursor) {
     for (let k = 0; k < dayEvs.length; k++) {
       const e = dayEvs[k], s = subj(e.subjectId), t = TYPES[e.type] || TYPES.altro;
       doc.setFont("helvetica", t.strong ? "bold" : "normal"); doc.setFontSize(6.3);
-      const label = pdfTxt(`${e.time ? e.time + " " : ""}${TYPE_CODE[e.type] || "ALT"} ${s.abbr || s.name.slice(0, 3).toUpperCase()}: ${e.title}`);
+      const label = pdfTxt(`${e.time ? timeRange(e) + " " : ""}${TYPE_CODE[e.type] || "ALT"} ${s.abbr || s.name.slice(0, 3).toUpperCase()}: ${e.title}`);
       let lines = doc.splitTextToSize(label, cw - 5.2);
       if (lines.length > 2) { lines = lines.slice(0, 2); lines[1] = lines[1].length > 3 ? lines[1].slice(0, -3) + "..." : lines[1]; }
       const bh = lines.length * 2.6 + 1.4, more = dayEvs.length - k - 1;
@@ -1081,7 +1144,7 @@ function buildMonthPdf(JsPDF, cursor) {
       map[d].forEach((e, i) => {
         const s = subj(e.subjectId), t = TYPES[e.type] || TYPES.altro;
         doc.setFont("helvetica", "normal"); doc.setFontSize(7.5);
-        const typeL = doc.splitTextToSize(pdfTxt(`${TYPE_CODE[e.type] || "ALT"} ${t.label}${s.id ? " - " + s.name : ""}${e.time ? " - ore " + e.time : ""}`), 52);
+        const typeL = doc.splitTextToSize(pdfTxt(`${TYPE_CODE[e.type] || "ALT"} ${t.label}${s.id ? " - " + s.name : ""}${e.time ? " - ore " + timeRange(e) : ""}`), 52);
         doc.setFont("helvetica", "bold"); doc.setFontSize(8);
         const titleL = doc.splitTextToSize(pdfTxt(e.title), 74).slice(0, 4);
         doc.setFont("helvetica", "normal"); doc.setFontSize(7);
@@ -1112,6 +1175,105 @@ function buildMonthPdf(JsPDF, cursor) {
     doc.text(`Pagina ${p} di ${n}`, W / 2, H - 4, { align: "center" });
   }
   return doc;
+}
+
+/* ================= importazione da Google Calendar (.ics) ================= */
+const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const icsUnesc = (v) => String(v || "").replace(/\\[nN]/g, "\n").replace(/\\,/g, ",").replace(/\;/g, ";").replace(/\\\\/g, "\\");
+function parseIcs(text) {
+  const lines = text.replace(/\r\n?/g, "\n").replace(/\n[ \t]/g, "").split("\n");
+  const out = []; let cur = null;
+  for (const raw of lines) {
+    if (raw === "BEGIN:VEVENT") { cur = {}; continue; }
+    if (raw === "END:VEVENT") { if (cur) out.push(cur); cur = null; continue; }
+    if (!cur) continue;
+    const i = raw.indexOf(":");
+    if (i < 0) continue;
+    const name = raw.slice(0, i).split(";")[0].toUpperCase();
+    if (!(name in cur)) cur[name] = raw.slice(i + 1);
+  }
+  return out;
+}
+function icsDate(v) {
+  const m = String(v || "").match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?$/);
+  if (!m) return null;
+  if (m[4] === undefined) return { date: `${m[1]}-${m[2]}-${m[3]}`, time: "" };
+  let d = `${m[1]}-${m[2]}-${m[3]}`, t = `${m[4]}:${m[5]}`;
+  if (m[7]) { const x = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0))); d = iso(x); t = `${pad(x.getHours())}:${pad(x.getMinutes())}`; }
+  return { date: d, time: t === "00:00" ? "" : t };
+}
+function guessType(text) {
+  const t = norm(text);
+  if (/verific|compito in classe|\bscritto\b|test\b|\bprova\b/.test(t)) return "verifica";
+  if (/interrog|\borale\b/.test(t)) return "interrogazione";
+  if (/consegn|scadenz/.test(t)) return "consegna";
+  if (/uscita|gita|visita|viaggio|museo|teatro/.test(t)) return "uscita";
+  if (/compit|esercizi|studiare|\bpag\b|ripasso/.test(t)) return "compito";
+  if (/assemblea|festa|open day|sciopero|evento|premiazione|laboratorio/.test(t)) return "evento";
+  if (/avviso|comunicazione|circolare/.test(t)) return "comunicazione";
+  return "altro";
+}
+function guessSubject(text) {
+  const t = norm(text);
+  let best = "", len = 0;
+  for (const s of S.subjects) {
+    const n = norm(s.name).trim(), a = norm(s.abbr).trim();
+    const stem = n.slice(0, Math.min(5, n.length));
+    const hit = (n.length >= 3 && new RegExp("\\b" + reEsc(stem)).test(t)) || (a.length >= 2 && new RegExp("\\b" + reEsc(a) + "\\b").test(t));
+    if (hit && n.length > len) { best = s.id; len = n.length; }
+  }
+  return best;
+}
+let impRows = [], impInfo = {}, impFrom = "", impTo = "";
+const inRange = (r) => (!impFrom || r.date >= impFrom) && (!impTo || r.date <= impTo);
+async function impLoad(file) {
+  if (!file) return;
+  let text;
+  try { text = await file.text(); } catch { toast("Impossibile leggere il file."); return; }
+  if (!/BEGIN:VCALENDAR/i.test(text)) { toast("Il file non sembra un calendario .ics."); return; }
+  const raw = parseIcs(text);
+  impRows = []; impFrom = impTo = ""; impInfo = { total: raw.length, recurring: 0, cancelled: 0, invalid: 0 };
+  for (const e of raw) {
+    if (/^CANCELLED$/i.test(e.STATUS || "")) { impInfo.cancelled++; continue; }
+    if (e.RRULE || e["RECURRENCE-ID"]) { impInfo.recurring++; continue; }
+    const st = icsDate(e.DTSTART), title = icsUnesc(e.SUMMARY).trim();
+    if (!st || !title) { impInfo.invalid++; continue; }
+    let desc = icsUnesc(e.DESCRIPTION).replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").trim();
+    if (e.LOCATION) desc = (desc ? desc + "\n" : "") + "Luogo: " + icsUnesc(e.LOCATION).trim();
+    const en = icsDate(e.DTEND);
+    const endT = en && st.time && en.time && en.date === st.date && en.time > st.time ? en.time : "";
+    if (en && !st.time && !en.time && diffDays(en.date, st.date) > 1) desc = (desc ? desc + "\n" : "") + `Dal ${short(st.date)} al ${short(addDays(en.date, -1))}`;
+    const dup = S.events.some((x) => x.date === st.date && norm(x.title) === norm(title));
+    impRows.push({ title: title.slice(0, 200), date: st.date, time: st.time, endTime: endT, description: desc.slice(0, 5000), type: guessType(title), subjectId: guessSubject(title + " " + desc), dup, on: !dup });
+  }
+  impRows.sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+  impRender();
+}
+function impBtn() {
+  const b = $('[data-action="impgo"]'), n = impRows.filter((r) => r.on && inRange(r)).length;
+  if (b) { b.textContent = `Importa ${n} event${n === 1 ? "o" : "i"}`; b.disabled = !n; }
+}
+function impRender() {
+  const body = $("#impbody");
+  if (!body) return;
+  const notes = [impInfo.recurring && `${impInfo.recurring} ricorrenti ignorati`, impInfo.cancelled && `${impInfo.cancelled} annullati ignorati`, impInfo.invalid && `${impInfo.invalid} non leggibili`, impRows.some((r) => r.dup) && "quelli già presenti sono deselezionati"].filter(Boolean);
+  const subOpts = (sel) => `<option value="">— Nessuna —</option>` + S.subjects.map((s) => `<option value="${s.id}" ${s.id === sel ? "selected" : ""}>${esc(s.name)}</option>`).join("");
+  const typeOpts = (sel) => Object.entries(TYPES).map(([k, v]) => `<option value="${k}" ${k === sel ? "selected" : ""}>${v.label}</option>`).join("");
+  const vis = impRows.filter(inRange).length;
+  body.innerHTML = `<div class="row2" style="margin-bottom:10px"><label>Dal<input type="date" id="impfrom" value="${esc(impFrom)}"></label><label>Al<input type="date" id="impto" value="${esc(impTo)}"></label></div>
+    <p class="muted small">${vis} eventi${impFrom || impTo ? " nel periodo" : ""}${vis !== impRows.length ? ` (su ${impRows.length} nel file)` : ""}${notes.length ? " · " + notes.join(" · ") : ""}. Controlla materia e tipo, poi importa.</p>
+    <div class="list-actions" style="margin:8px 0"><button class="btn sm" data-action="impall" data-v="1">Seleziona tutti</button><button class="btn sm" data-action="impall" data-v="0">Nessuno</button></div>
+    <div class="implist">${impRows.map((r, i) => !inRange(r) ? "" : `<div class="improw"><input type="checkbox" data-imp="on" data-i="${i}" ${r.on ? "checked" : ""} aria-label="Importa"><div><b>${esc(r.title)}</b><div class="muted small">${esc(short(r.date))}${r.time ? " · " + esc(timeRange(r)) : ""}${r.dup ? " · già presente" : ""}</div></div>
+      <div class="row2"><select data-imp="subjectId" data-i="${i}" aria-label="Materia">${subOpts(r.subjectId)}</select><select data-imp="type" data-i="${i}" aria-label="Tipologia">${typeOpts(r.type)}</select></div></div>`).join("") || '<p class="muted">Nessun evento importabile nel file.</p>'}</div>
+    <div class="sheet-f"><span class="spacer"></span><button class="btn" data-action="closemodal">Annulla</button><button class="btn primary" data-action="impgo" disabled>Importa</button></div>`;
+  impBtn();
+}
+function impChange(t) {
+  const r = impRows[+t.dataset.i];
+  if (!r) return;
+  if (t.dataset.imp === "on") { r.on = t.checked; impBtn(); }
+  else r[t.dataset.imp] = t.value;
 }
 
 /* ================= azioni (delegazione eventi) ================= */
@@ -1173,6 +1335,33 @@ const actions = {
       if (uid) { try { await auth.currentUser.delete(); } catch { try { await signOut(auth); } catch {} } }
       el.disabled = false;
     }
+  },
+  loadw: (el) => { S.loadWeek = +el.dataset.v; render(); },
+  goday: (el) => { S.selected = S.cursor = el.dataset.date; S.cal = "week"; go("cal"); },
+  impopen: () => {
+    impRows = [];
+    openModal(`<div class="sheet-h"><h3>Importa da Google Calendar</h3><button class="icon-btn" data-action="closemodal" aria-label="Chiudi">${ic("x")}</button></div>
+      <div id="impbody"><p class="muted small" style="margin-bottom:10px">Su Google Calendar, da computer: ingranaggio → Impostazioni → Importazione ed esportazione → Esporta. Scarichi uno zip: estrailo e scegli qui il file .ics del tuo calendario.</p>
+      <input type="file" id="icsfile" accept=".ics,text/calendar"></div>`);
+  },
+  impall: (el) => { impRows.forEach((r) => { if (inRange(r)) r.on = el.dataset.v === "1"; }); impRender(); },
+  impgo: async (el) => {
+    const rows = impRows.filter((r) => r.on && inRange(r));
+    if (!rows.length || !isRep()) return;
+    el.disabled = true;
+    try {
+      for (let i = 0; i < rows.length; i += 400) {
+        const b = writeBatch(db), now = serverTimestamp();
+        rows.slice(i, i + 400).forEach((r) => b.set(doc(collection(db, "events")), {
+          title: r.title, subjectId: r.subjectId || "", type: r.type, date: r.date, time: r.time || "", endTime: r.endTime || "", description: r.description,
+          topics: "", notes: "", links: [], createdBy: S.user.uid, createdAt: now, updatedAt: now,
+        }));
+        await b.commit();
+      }
+      await addDoc(collection(db, "changelog"), { eventId: "", title: "Importazione", type: "altro", subjectId: "", date: todayStr(), action: "created", details: { import: rows.length }, userId: S.user.uid, userName: S.name, at: serverTimestamp() });
+      closeModal();
+      toast(`Importati ${rows.length} eventi`);
+    } catch (err) { el.disabled = false; fail(err); }
   },
   logout: async () => { await signOut(auth); toast("Disconnesso"); },
   claim: async () => {
@@ -1244,8 +1433,12 @@ function bind() {
   });
   document.addEventListener("change", async (e) => {
     const t = e.target;
+    if (t.closest?.("#evform") && (t.name === "date" || t.name === "type")) updateLoadHint(t.closest("form"));
     if (t.id === "fsub") { S.filters.subject = t.value; renderCalBody(); }
     else if (t.id === "ftype") { S.filters.type = t.value; renderCalBody(); }
+    else if (t.id === "icsfile") { impLoad(t.files[0]); }
+    else if (t.id === "impfrom" || t.id === "impto") { if (t.id === "impfrom") impFrom = t.value; else impTo = t.value; impRender(); }
+    else if (t.dataset?.imp) { impChange(t); }
     else if (t.dataset?.sf) {
       const row = t.closest("[data-sid]"), f = t.dataset.sf, v = t.value.trim();
       if (f === "name" && !v) { render(); return; }
