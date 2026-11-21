@@ -457,16 +457,17 @@ if (configured && !loadError) {
 }
 
 /* ================= stato ================= */
-const VIEWS = ["home", "cal", "notices", "account", "class", "other"];
-const REP_VIEWS = ["class", "other"];
+const VIEWS = ["home", "cal", "notices", "account", "class", "other", "admin"];
+const REP_VIEWS = ["class", "other", "admin"];
 const S = {
   user: null, role: "student", name: "", hasProfile: false,
-  events: [], subjects: [], anns: [], log: [], info: [], openList: "",
+  events: [], subjects: [], anns: [], log: [], info: [], openList: "", users: [], codes: [],
   view: "home", cal: "month", cursor: todayStr(), selected: todayStr(),
   filters: { subject: "", type: "", q: "", past: false }, ntab: "ann",
   loaded: { events: false, subjects: false }, error: "", setup: false,
 };
-const isRep = () => S.role === "rep" && !!S.user;
+const isRep = () => (S.role === "rep" || S.role === "admin") && !!S.user;
+const isAdmin = () => S.role === "admin" && !!S.user;
 const subj = (id) => S.subjects.find((s) => s.id === id) || { id: "", name: "Senza materia", abbr: "", color: "#8a8f98" };
 const mapDocs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: "estimate" }) }));
 const evData = (e) => ({
@@ -756,7 +757,29 @@ function viewOther() {
   <section class="card"><div class="list-actions">
     <button class="btn" data-action="nav" data-view="notices">${ic("msg", 16)} Archivio comunicazioni</button>
     <button class="btn" data-action="gotolog">${ic("clock", 16)} Storico modifiche</button>
-    <button class="btn" data-action="nav" data-view="account">${ic("user", 16)} Impostazioni e account</button></div></section>`;
+    <button class="btn" data-action="nav" data-view="account">${ic("user", 16)} Impostazioni e account</button>
+    ${isAdmin() ? `<button class="btn primary" data-action="nav" data-view="admin">${ic("star", 16)} Pannello amministratore</button>` : ""}</div></section>`;
+}
+
+const codeGen = () => { const c = "abcdefghjkmnpqrstuvwxyz23456789"; let r = ""; const a = crypto.getRandomValues(new Uint8Array(8)); a.forEach((x) => (r += c[x % c.length])); return `rapp-${r}`; };
+function viewAdmin() {
+  const t = todayStr(), me = S.user?.uid;
+  const past = S.events.filter((e) => (e.endDate || e.date) < t).length;
+  const people = S.users.filter((u) => u.id !== me && u.role !== "student").concat(S.users.filter((u) => u.id !== me && u.role === "student"));
+  return `<div class="page-h"><h1>Amministratore</h1><span class="pill rep">Solo tu</span></div>
+  <section class="card"><h3 style="margin-bottom:10px">Panoramica</h3><div class="stats" style="grid-template-columns:repeat(2,1fr)">
+    <div class="stat"><b>${S.events.length}</b><span>eventi (${past} passati)</span></div><div class="stat"><b>${S.anns.length}</b><span>comunicazioni</span></div>
+    <div class="stat"><b>${S.users.filter((u) => u.role !== "student").length}</b><span>con permessi di modifica</span></div><div class="stat"><b>${lists().length}</b><span>elenchi in Classe</span></div></div></section>
+  <section class="card"><h3 style="margin-bottom:4px">Rappresentanti</h3><p class="muted small" style="margin-bottom:8px">Chi è entrato con un codice o un account. Puoi dare o togliere i permessi.</p>
+    ${people.length ? people.map((u) => `<div class="crow"><div class="grow"><b>${esc(u.displayName || "Senza nome")}</b><span>${u.role === "admin" ? "Amministratore" : u.role === "rep" ? "Rappresentante" : "Studente"}</span></div>
+      ${u.role === "admin" ? "" : u.role === "rep" ? `<button class="btn sm" data-action="setrole" data-id="${u.id}" data-role="student">Togli permessi</button>` : `<button class="btn sm" data-action="setrole" data-id="${u.id}" data-role="rep">Rendi rappresentante</button>`}</div>`).join("") : '<p class="muted small">Nessun altro utente.</p>'}</section>
+  <section class="card"><div class="card-h"><h3>Codici rappresentante</h3><button class="btn sm" data-action="newcode">${ic("plus", 15)} Nuovo</button></div>
+    <p class="muted small" style="margin-bottom:8px">Chi inserisce un codice valido diventa rappresentante. Elimina un codice per non farlo usare più (chi è già dentro resta rappresentante).</p>
+    ${S.codes.length ? S.codes.map((c) => `<div class="crow"><div class="grow"><b style="font-family:ui-monospace,monospace;overflow-wrap:anywhere">${esc(c.id)}</b></div><button class="icon-btn sm" data-action="delcode" data-id="${esc(c.id)}" aria-label="Elimina">${ic("trash", 16)}</button></div>`).join("") : '<p class="muted small">Nessun codice.</p>'}</section>
+  <section class="card"><h3 style="margin-bottom:10px">Dati</h3><div class="list-actions">
+    <button class="btn" data-action="backup">${ic("download", 16)} Scarica backup completo (.json)</button>
+    <button class="btn" data-action="cleanold">${ic("trash", 16)} Elimina eventi vecchi…</button></div>
+    <p class="muted small" style="margin-top:8px">Il backup contiene eventi, materie, comunicazioni ed elenchi della classe.</p></section>`;
 }
 const nameForm = (id, title, label, val, ok, extra = "") => openModal(`<form id="${id}" class="form" data-id="${extra}">
   <div class="sheet-h"><h3>${title}</h3><button type="button" class="icon-btn" data-action="closemodal" aria-label="Chiudi">${ic("x")}</button></div>
@@ -773,6 +796,7 @@ function viewAccount() {
        ${!isRep() ? `<div class="claim"><label>Sei un rappresentante di classe?<div class="inline"><input id="claimcode" placeholder="Codice rappresentante" autocomplete="off"><button class="btn" data-action="claim">Attiva</button></div></label></div>` : ""}
        <button class="btn" data-action="logout">Esci</button>${S.user.isAnonymous ? '<p class="muted small" style="margin-top:8px">Se esci o cancelli i dati del browser, dovrai reinserire il codice.</p>' : ""}</section>`
     : `<section class="card"><h3>Sei un rappresentante di classe?</h3><p class="muted" style="margin:6px 0 12px">Gli studenti non devono fare nulla: il calendario si consulta senza accedere. Se sei un rappresentante, scrivi il tuo nome e il codice per poter modificare.</p><div class="form"><label>Il tuo nome<input id="repname" maxlength="60" autocomplete="name" placeholder="Es. Giulia"></label><label>Codice rappresentante<div class="inline"><input id="repcode" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="btn primary" data-action="repenter">Entra</button></div></label></div></section>`;
+  if (!S.user) h += `<section class="card"><h3 style="margin-bottom:6px">Amministratore</h3><button class="btn" data-action="auth">Accedi con email e password</button></section>`;
   const notifOk = "Notification" in window;
   h += `<section class="card"><h3 style="margin-bottom:10px">Preferenze</h3>
     <div class="seg">${[["light", "Chiaro"], ["dark", "Scuro"], ["auto", "Automatico"]].map(([k, l]) => `<button class="${mode === k ? "on" : ""}" data-action="settheme" data-v="${k}">${l}</button>`).join("")}</div>
@@ -813,7 +837,7 @@ function renderChrome() {
     <button class="avatar" data-action="nav" data-view="account" aria-label="Account">${S.user && initials ? esc(initials) : ic("user", 17)}</button>`;
   const n = S.view === "notices" ? 0 : unseen();
   $("#tabs").innerHTML = (isRep() ? [["cal", "Calendario", "cal"], ["notices", "Comunicazioni", "msg"], ["class", "Classe", "users"], ["other", "Altro", "grid4"]] : [["home", "Home", "home"], ["cal", "Calendario", "cal"], ["notices", "Avvisi", "bell"], ["account", "Account", "user"]])
-    .map(([v, l, i]) => `<button class="${S.view === v || (isRep() && v === "other" && S.view === "account") || (isRep() && v === "cal" && S.view === "home") ? "on" : ""}" data-action="nav" data-view="${v}">${ic(i, 22)}<span>${l}</span>${v === "notices" && n ? `<span class="badge">${n > 9 ? "9+" : n}</span>` : ""}</button>`)
+    .map(([v, l, i]) => `<button class="${S.view === v || (isRep() && v === "other" && (S.view === "account" || S.view === "admin")) || (isRep() && v === "cal" && S.view === "home") ? "on" : ""}" data-action="nav" data-view="${v}">${ic(i, 22)}<span>${l}</span>${v === "notices" && n ? `<span class="badge">${n > 9 ? "9+" : n}</span>` : ""}</button>`)
     .join("");
 }
 
@@ -830,8 +854,8 @@ function render() {
   renderChrome();
   const err = S.error ? `<section class="card err"><b>${esc(S.error)}</b></section>` : "";
   if (!(S.loaded.events && S.loaded.subjects)) { main.innerHTML = err || '<p class="muted center">Caricamento…</p>'; return; }
-  const vw = REP_VIEWS.includes(S.view) && !isRep() ? "home" : S.view;
-  main.innerHTML = err + { home: viewHome, cal: viewCalendar, notices: viewNotices, account: viewAccount, class: viewClass, other: viewOther }[vw]();
+  const vw = (REP_VIEWS.includes(S.view) && !isRep()) || (S.view === "admin" && !isAdmin()) ? "home" : S.view;
+  main.innerHTML = err + { home: viewHome, cal: viewCalendar, notices: viewNotices, account: viewAccount, class: viewClass, other: viewOther, admin: viewAdmin }[vw]();
   if (keep) { const el = document.getElementById(keep.id); if (el) { el.focus(); try { el.setSelectionRange(keep.pos, keep.pos); } catch {} } }
 }
 
@@ -874,17 +898,21 @@ function listen() {
     firstL = false; S.log = mapDocs(s); render();
   }, err);
 
-  let unsubProfile = null, unsubInfo = null;
+  let unsubProfile = null, unsubInfo = null, unsubAdmin = null;
   onAuthStateChanged(auth, (user) => {
     S.user = user;
-    unsubProfile?.(); unsubProfile = null; unsubInfo?.(); unsubInfo = null; S.info = [];
+    unsubProfile?.(); unsubProfile = null; unsubInfo?.(); unsubInfo = null; S.info = []; unsubAdmin?.forEach((u) => u()); unsubAdmin = null; S.users = []; S.codes = [];
     if (!user) { S.role = "student"; S.name = ""; S.hasProfile = false; render(); return; }
     S.name = user.displayName || (user.email ? user.email.split("@")[0] : "Rappresentante");
     unsubProfile = onSnapshot(doc(db, "users", user.uid), (d) => {
       S.hasProfile = d.exists();
-      S.role = d.exists() && d.data().role === "rep" ? "rep" : "student";
-      if (S.role === "rep" && !unsubInfo) unsubInfo = onSnapshot(collection(db, "classinfo"), (q) => { S.info = mapDocs(q); render(); }, () => { S.info = []; });
-      if (S.role !== "rep" && unsubInfo) { unsubInfo(); unsubInfo = null; S.info = []; }
+      S.role = d.exists() && ["rep", "admin"].includes(d.data().role) ? d.data().role : "student";
+      if (S.role === "admin" && !unsubAdmin) unsubAdmin = [
+        onSnapshot(collection(db, "users"), (q) => { S.users = mapDocs(q); render(); }, () => {}),
+        onSnapshot(collection(db, "repCodes"), (q) => { S.codes = mapDocs(q); render(); }, () => {})];
+      if (S.role !== "admin" && unsubAdmin) { unsubAdmin.forEach((u) => u()); unsubAdmin = null; S.users = []; S.codes = []; }
+      if (S.role !== "student" && !unsubInfo) unsubInfo = onSnapshot(collection(db, "classinfo"), (q) => { S.info = mapDocs(q); render(); }, () => { S.info = []; });
+      if (S.role === "student" && unsubInfo) { unsubInfo(); unsubInfo = null; S.info = []; }
       if (d.exists() && d.data().displayName) S.name = d.data().displayName;
       render();
     }, () => { S.role = "student"; render(); });
@@ -1463,6 +1491,29 @@ const actions = {
     try { await claimCode(code); toast("Ora sei rappresentante"); } catch { toast("Codice non valido."); }
   },
   newann: () => annForm(),
+  setrole: async (el) => {
+    const r = el.dataset.role;
+    if (!(await ask(r === "rep" ? "Dare i permessi?" : "Togliere i permessi?", r === "rep" ? "Potrà modificare calendario ed elenchi." : "Tornerà a poter solo consultare.", "Conferma"))) return;
+    try { await updateDoc(doc(db, "users", el.dataset.id), { role: r }); } catch (err) { fail(err); }
+  },
+  newcode: () => openModal(`<form id="codeform" class="form"><div class="sheet-h"><h3>Nuovo codice</h3><button type="button" class="icon-btn" data-action="closemodal" aria-label="Chiudi">${ic("x")}</button></div>
+    <label>Codice (lungo e non banale, senza “/”)<input name="v" required minlength="8" maxlength="60" value="${codeGen()}" autocomplete="off"></label>
+    <div class="sheet-f"><span class="spacer"></span><button type="button" class="btn" data-action="closemodal">Annulla</button><button class="btn primary" type="submit">Crea</button></div></form>`),
+  delcode: async (el) => {
+    if (!(await ask("Eliminare il codice?", "Nessuno potrà più usarlo per diventare rappresentante."))) return;
+    try { await deleteDoc(doc(db, "repCodes", el.dataset.id)); } catch (err) { fail(err); }
+  },
+  backup: () => {
+    const clean = (l) => l.map((x) => JSON.parse(JSON.stringify(x, (k, v) => (v && typeof v === "object" && typeof v.toMillis === "function" ? v.toMillis() : v))));
+    const data = { creato: new Date().toISOString(), eventi: clean(S.events), materie: clean(S.subjects), comunicazioni: clean(S.anns), classe: clean(S.info) };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: "application/json" }));
+    const a = Object.assign(document.createElement("a"), { href: url, download: `backup-calendario-${todayStr()}.json` });
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+  },
+  cleanold: () => openModal(`<form id="cleanform" class="form"><div class="sheet-h"><h3>Elimina eventi vecchi</h3><button type="button" class="icon-btn" data-action="closemodal" aria-label="Chiudi">${ic("x")}</button></div>
+    <label>Elimina gli eventi finiti da più di<select name="v"><option value="30">30 giorni</option><option value="90" selected>3 mesi</option><option value="180">6 mesi</option><option value="365">1 anno</option></select></label>
+    <p class="muted small">Scarica prima un backup se vuoi poterli recuperare.</p>
+    <div class="sheet-f"><span class="spacer"></span><button type="button" class="btn" data-action="closemodal">Annulla</button><button class="btn primary" type="submit">Continua</button></div></form>`),
   openlist: (el) => { S.openList = S.openList === el.dataset.id ? "" : el.dataset.id; render(); },
   tick: async (el) => {
     const l = S.info.find((x) => x.id === el.dataset.id); if (!l) return;
@@ -1537,6 +1588,20 @@ function bind() {
     e.preventDefault();
     if (f.id === "evform") submitEvent(f);
     else if (f.id === "authform") submitAuth(f);
+    else if (f.id === "codeform") {
+      const v = String(new FormData(f).get("v")).trim().replace(/\//g, "");
+      setDoc(doc(db, "repCodes", v), { attivo: true, creato: serverTimestamp() }).then(() => { closeModal(); toast("Codice creato"); }).catch(fail);
+    }
+    else if (f.id === "cleanform") {
+      const days = +new FormData(f).get("v"), lim = addDays(todayStr(), -days);
+      const old = S.events.filter((e) => (e.endDate || e.date) < lim);
+      closeModal();
+      if (!old.length) { toast("Nessun evento da eliminare."); return; }
+      ask(`Eliminare ${old.length} eventi?`, "Non si può annullare.", "Elimina").then(async (ok) => {
+        if (!ok) return;
+        try { for (let i = 0; i < old.length; i += 400) { const b = writeBatch(db); old.slice(i, i + 400).forEach((e) => b.delete(doc(db, "events", e.id))); await b.commit(); } toast(`${old.length} eventi eliminati`); } catch (err) { fail(err); }
+      });
+    }
     else if (f.id === "listform" || f.id === "renform" || f.id === "rosterform") {
       const v = String(new FormData(f).get("v") || "").trim(), btn = f.querySelector("[type=submit]");
       btn.disabled = true;
