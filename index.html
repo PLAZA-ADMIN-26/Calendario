@@ -67,6 +67,12 @@ main{max-width:1100px;margin:0 auto;padding:18px 16px}
 .mbadge.ind{background:rgba(34,160,90,.16);color:#1f8f50}.mbadge.mu{background:rgba(34,160,90,.16);color:#1f8f50}.mbadge.ut{background:rgba(60,120,220,.16);color:#3a78d8}
 .crow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}.crow:last-child{border-bottom:0}
 .crow .grow{flex:1;min-width:0}.crow .grow b{display:block}.crow .grow span{color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.bar{display:grid;grid-template-columns:110px 1fr 28px;gap:8px;align-items:center;font-size:13px;margin:5px 0}.bar span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bt{height:10px;border-radius:9px;background:var(--surface-2);overflow:hidden}.bt i{display:block;height:100%;border-radius:9px}.bar b{text-align:right}
+.pgh{margin:12px 0 2px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.pstat{flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:700}.pstat.in{background:rgba(34,160,90,.18);color:#1f8f50}.pstat.out{background:rgba(220,60,40,.15);color:#c2410c}
+.uact{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-start;width:100%}.crow{flex-wrap:wrap}.crow .grow{flex:1 1 180px}
+.gate{max-width:440px;margin:40px auto}
+body.gated nav.tabs{display:none}body.gated .content{padding:0 0 40px}
 nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;background:var(--surface);border-top:1px solid var(--border);padding-bottom:env(safe-area-inset-bottom)}
 nav.tabs button{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:9px 4px 8px;background:none;border:0;color:var(--muted);font-size:11px;font-weight:500;cursor:pointer;position:relative}
 nav.tabs button.on{color:var(--accent)}
@@ -461,12 +467,13 @@ const VIEWS = ["home", "cal", "notices", "account", "class", "other", "admin"];
 const REP_VIEWS = ["class", "other", "admin"];
 const S = {
   user: null, role: "student", name: "", hasProfile: false,
-  events: [], subjects: [], anns: [], log: [], info: [], openList: "", users: [], codes: [],
+  events: [], subjects: [], anns: [], log: [], info: [], openList: "", users: [], codes: [], scodes: [], trash: [], cfg: {}, authReady: false,
   view: "home", cal: "month", cursor: todayStr(), selected: todayStr(),
   filters: { subject: "", type: "", q: "", past: false }, ntab: "ann",
   loaded: { events: false, subjects: false }, error: "", setup: false,
 };
-const isRep = () => (S.role === "rep" || S.role === "admin") && !!S.user;
+const cls = () => S.cfg.className || CLASS_NAME;
+const isRep = () => (S.role === "admin" || (S.role === "rep" && !S.cfg.readOnly)) && !!S.user;
 const isAdmin = () => S.role === "admin" && !!S.user;
 const subj = (id) => S.subjects.find((s) => s.id === id) || { id: "", name: "Senza materia", abbr: "", color: "#8a8f98" };
 const mapDocs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: "estimate" }) }));
@@ -541,6 +548,7 @@ const chip = (e) => {
 const empty = (icon, text) => `<div class="empty">${ic(icon, 28)}<p>${esc(text)}</p></div>`;
 
 function logText(l) {
+  if (l.details?.repeat) return { icon: "plus", text: `Aggiunti ${l.details.repeat} eventi ripetuti: “${l.title}”` };
   if (l.details?.import) return { icon: "plus", text: `Importati ${l.details.import} eventi dal calendario` };
   const t = TYPES[l.type]?.label || "Evento";
   const s = l.subjectId ? subj(l.subjectId).name : "";
@@ -555,9 +563,16 @@ function logText(l) {
   const f = [...new Set(Object.keys(l.details || {}).map((k) => names[k]).filter(Boolean))];
   return { icon: "edit", text: `Modificato ${title}${f.length ? ` (${f.join(", ")})` : ""}` };
 }
-const logRow = (l) => {
+const undoKeys = (l) => Object.keys(l.details || {}).filter((k) => l.details[k] && l.details[k].from !== undefined);
+const canUndo = (l) => {
+  if (!isAdmin() || l.details?.import || l.details?.repeat) return false;
+  if (l.action === "created") return S.events.some((e) => e.id === l.eventId);
+  if (l.action === "deleted") return S.trash.some((t) => t.id === l.eventId);
+  return undoKeys(l).length > 0 && S.events.some((e) => e.id === l.eventId);
+};
+const logRow = (l, withUndo) => {
   const x = logText(l);
-  return `<div class="logrow">${ic(x.icon, 18)}<div><p>${esc(x.text)}</p><small>${ago(ms(l.at))}${l.userName ? ` · ${esc(l.userName)}` : ""}</small></div></div>`;
+  return `<div class="logrow">${ic(x.icon, 18)}<div style="flex:1"><p>${esc(x.text)}</p><small>${ago(ms(l.at))}${l.userName ? ` · ${esc(l.userName)}` : ""}</small></div>${withUndo && canUndo(l) ? `<button class="btn sm" data-action="undolog" data-id="${l.id}">Annulla</button>` : ""}</div>`;
 };
 
 /* ================= viste ================= */
@@ -620,8 +635,9 @@ function viewHome() {
     nextCard = `<section class="card next none">${ic("check", 22)}<p>Nessuna verifica o interrogazione in programma.</p></section>`;
   }
 
-  return `<div class="hello"><h1>${first ? `Ciao, ${esc(first)}` : esc(CLASS_NAME)}</h1><p>${longDate(t)}</p></div>
+  return `<div class="hello"><h1>${first ? `Ciao, ${esc(first)}` : esc(cls())}</h1><p>${longDate(t)}</p></div>
   ${imp ? `<section class="card banner">${ic("bell", 20)}<div><span class="eyebrow">Comunicazione importante</span><h3>${esc(imp.title)}</h3>${imp.body ? `<p>${esc(imp.body)}</p>` : ""}</div></section>` : ""}
+  ${isAdmin() && S.events.some((e) => occurs(e, addDays(t, 1))) ? `<section class="card banner">${ic("clock", 20)}<div><span class="eyebrow">Domani</span>${S.events.filter((e) => occurs(e, addDays(t, 1))).sort(strongFirst).map((e) => `<p><b>${esc(e.title)}</b> · ${esc(subj(e.subjectId).name)}${e.time ? " · " + esc(timeRange(e)) : ""}</p>`).join("")}</div></section>` : ""}
   <div class="grid2"><div>
     ${nextCard}
     ${loadCard()}
@@ -727,7 +743,7 @@ function viewNotices() {
     <h3>${esc(a.title)}</h3>${a.body ? `<p class="pre">${esc(a.body)}</p>` : ""}</article>`).join("");
   return `<div class="page-h"><h1>Avvisi</h1>${isRep() && tab === "ann" ? `<button class="btn primary" data-action="newann">${ic("plus", 16)} Nuova</button>` : ""}</div>
   <div class="seg" style="margin-bottom:16px"><button class="${tab === "ann" ? "on" : ""}" data-action="ntab" data-v="ann">Comunicazioni</button><button class="${tab === "log" ? "on" : ""}" data-action="ntab" data-v="log">Storico modifiche</button></div>
-  ${tab === "ann" ? anns || empty("bell", "Nessuna comunicazione pubblicata.") : `<section class="card">${S.log.length ? S.log.map(logRow).join("") : empty("clock", "Ancora nessuna modifica registrata.")}</section>`}`;
+  ${tab === "ann" ? anns || empty("bell", "Nessuna comunicazione pubblicata.") : `<section class="card">${S.log.length ? S.log.map((l) => logRow(l, true)).join("") : empty("clock", "Ancora nessuna modifica registrata.")}</section>`}`;
 }
 
 const lists = () => S.info.filter((x) => x.kind === "list").sort((a, b) => ms(a.createdAt) - ms(b.createdAt));
@@ -742,6 +758,7 @@ function listCard(l) {
         <button class="btn sm" data-action="renlist" data-id="${l.id}">${ic("edit", 15)} Rinomina</button>
         <button class="btn sm" data-action="duplist" data-id="${l.id}">${ic("share", 15)} Duplica</button>
         <button class="btn sm" data-action="resetlist" data-id="${l.id}">Azzera spunte</button>
+        ${isAdmin() ? `<button class="btn sm" data-action="listpdf" data-id="${l.id}">${ic("download", 15)} PDF</button>` : ""}
         <button class="btn sm" data-action="dellist" data-id="${l.id}">${ic("trash", 15)} Elimina</button></div></div>` : ""}</section>`;
 }
 function viewClass() {
@@ -761,26 +778,69 @@ function viewOther() {
     ${isAdmin() ? `<button class="btn primary" data-action="nav" data-view="admin">${ic("star", 16)} Pannello amministratore</button>` : ""}</div></section>`;
 }
 
-const codeGen = () => { const c = "abcdefghjkmnpqrstuvwxyz23456789"; let r = ""; const a = crypto.getRandomValues(new Uint8Array(8)); a.forEach((x) => (r += c[x % c.length])); return `rapp-${r}`; };
-function viewAdmin() {
-  const t = todayStr(), me = S.user?.uid;
-  const past = S.events.filter((e) => (e.endDate || e.date) < t).length;
-  const people = S.users.filter((u) => u.id !== me && u.role !== "student").concat(S.users.filter((u) => u.id !== me && u.role === "student"));
-  return `<div class="page-h"><h1>Amministratore</h1><span class="pill rep">Solo tu</span></div>
-  <section class="card"><h3 style="margin-bottom:10px">Panoramica</h3><div class="stats" style="grid-template-columns:repeat(2,1fr)">
-    <div class="stat"><b>${S.events.length}</b><span>eventi (${past} passati)</span></div><div class="stat"><b>${S.anns.length}</b><span>comunicazioni</span></div>
-    <div class="stat"><b>${S.users.filter((u) => u.role !== "student").length}</b><span>con permessi di modifica</span></div><div class="stat"><b>${lists().length}</b><span>elenchi in Classe</span></div></div></section>
-  <section class="card"><h3 style="margin-bottom:4px">Rappresentanti</h3><p class="muted small" style="margin-bottom:8px">Chi è entrato con un codice o un account. Puoi dare o togliere i permessi.</p>
-    ${people.length ? people.map((u) => `<div class="crow"><div class="grow"><b>${esc(u.displayName || "Senza nome")}</b><span>${u.role === "admin" ? "Amministratore" : u.role === "rep" ? "Rappresentante" : "Studente"}</span></div>
-      ${u.role === "admin" ? "" : u.role === "rep" ? `<button class="btn sm" data-action="setrole" data-id="${u.id}" data-role="student">Togli permessi</button>` : `<button class="btn sm" data-action="setrole" data-id="${u.id}" data-role="rep">Rendi rappresentante</button>`}</div>`).join("") : '<p class="muted small">Nessun altro utente.</p>'}</section>
-  <section class="card"><div class="card-h"><h3>Codici rappresentante</h3><button class="btn sm" data-action="newcode">${ic("plus", 15)} Nuovo</button></div>
-    <p class="muted small" style="margin-bottom:8px">Chi inserisce un codice valido diventa rappresentante. Elimina un codice per non farlo usare più (chi è già dentro resta rappresentante).</p>
-    ${S.codes.length ? S.codes.map((c) => `<div class="crow"><div class="grow"><b style="font-family:ui-monospace,monospace;overflow-wrap:anywhere">${esc(c.id)}</b></div><button class="icon-btn sm" data-action="delcode" data-id="${esc(c.id)}" aria-label="Elimina">${ic("trash", 16)}</button></div>`).join("") : '<p class="muted small">Nessun codice.</p>'}</section>
-  <section class="card"><h3 style="margin-bottom:10px">Dati</h3><div class="list-actions">
-    <button class="btn" data-action="backup">${ic("download", 16)} Scarica backup completo (.json)</button>
-    <button class="btn" data-action="cleanold">${ic("trash", 16)} Elimina eventi vecchi…</button></div>
-    <p class="muted small" style="margin-top:8px">Il backup contiene eventi, materie, comunicazioni ed elenchi della classe.</p></section>`;
+const codeGen = (p = "rapp") => { const c = "abcdefghjkmnpqrstuvwxyz23456789"; let r = ""; crypto.getRandomValues(new Uint8Array(8)).forEach((x) => (r += c[x % c.length])); return `${p}-${r}`; };
+const tms = (t) => (t && t.toMillis ? t.toMillis() : typeof t === "number" ? t : 0);
+const fdt = (t) => (tms(t) ? new Date(tms(t)).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" }) : "mai");
+const pkey = (s) => norm(String(s)).replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean).sort().join(" ");
+const templates = () => S.info.filter((x) => x.kind === "tpl");
+const PALETTE_SITE = [["", "Blu (predefinito)"], ["#b3202c", "Rosso"], ["#1f8f50", "Verde"], ["#7c4dd6", "Viola"], ["#d9731f", "Arancione"], ["#2b2f36", "Grafite"]];
+const asec = (title, body, desc = "") => `<section class="card"><h3 style="margin-bottom:${desc ? 4 : 10}px">${title}</h3>${desc ? `<p class="muted small" style="margin-bottom:8px">${desc}</p>` : ""}${body}</section>`;
+const bar = (label, n, max, color) => `<div class="bar"><span>${esc(label)}</span><div class="bt"><i style="width:${Math.max(4, n / max * 100)}%;background:${color}"></i></div><b>${n}</b></div>`;
+function codeRows(list, col, label) {
+  return list.map((c) => {
+    const exp = c.scade ? (c.scade < Date.now() ? "scaduto" : "scade " + fdt(c.scade)) : "senza scadenza";
+    return `<div class="crow"><div class="grow"><b style="font-family:ui-monospace,monospace;overflow-wrap:anywhere">${esc(c.id)}</b><span>${label} · ${exp}</span></div><button class="icon-btn sm" data-action="delcode" data-col="${col}" data-id="${esc(c.id)}" aria-label="Elimina">${ic("trash", 16)}</button></div>`;
+  }).join("");
 }
+function viewAdmin() {
+  const t = todayStr(), me = S.user?.uid, rost = roster();
+  const past = S.events.filter((e) => lastDay(e) < t).length;
+  const others = S.users.filter((u) => u.id !== me);
+  const byKey = new Map();
+  others.forEach((u) => { const k = pkey(u.displayName || ""); const p = byKey.get(k); if (!p || tms(u.lastSeen || u.createdAt) > tms(p.lastSeen || p.createdAt)) byKey.set(k, u); });
+  const rkeys = new Set(rost.map(pkey));
+  const miss = rost.filter((n) => !byKey.has(pkey(n))), inn = rost.filter((n) => byKey.has(pkey(n)));
+  const prow = (n, u) => `<div class="crow"><span class="pstat ${u ? "in" : "out"}">${u ? ic("check", 14) : "✕"}</span><div class="grow"><b>${esc(n)}</b><span>${u ? "ultimo accesso: " + fdt(u.lastSeen || u.createdAt) : "non è ancora entrato"}</span></div></div>`;
+  const extra = [...byKey.entries()].filter(([k]) => !rkeys.has(k)).map(([, u]) => u);
+  const presence = !rost.length ? '<p class="muted small">Inserisci prima l\'elenco della classe in Classe → “Elenco della classe”.</p>'
+    : `<div class="stats" style="grid-template-columns:repeat(2,1fr)"><div class="stat"><b>${inn.length}</b><span>entrati</span></div><div class="stat"><b>${miss.length}</b><span>non ancora entrati</span></div></div>
+      ${miss.length ? `<h4 class="pgh">Non ancora entrati</h4>${miss.map((n) => prow(n)).join("")}` : ""}
+      ${inn.length ? `<h4 class="pgh">Entrati</h4>${inn.map((n) => prow(n, byKey.get(pkey(n)))).join("")}` : ""}
+      ${extra.length ? `<h4 class="pgh">Accessi con un nome diverso dall'elenco</h4>${extra.map((u) => prow(u.displayName || "Senza nome", u)).join("")}` : ""}`;
+  const people = [...others].sort((a, b) => tms(b.lastSeen || b.createdAt) - tms(a.lastSeen || a.createdAt));
+  const urow = (u) => `<div class="crow"><div class="grow"><b>${esc(u.displayName || "Senza nome")}</b><span>${u.role === "admin" ? "Amministratore" : u.role === "rep" ? "Rappresentante" : "Studente"}${u.blocked ? " · bloccato" : ""} · ultimo accesso ${fdt(u.lastSeen || u.createdAt)}</span></div>
+    <div class="uact">${u.role === "admin" ? "" : `${u.role === "rep" ? `<button class="btn sm" data-action="setrole" data-id="${u.id}" data-role="student">Togli permessi</button><button class="btn sm" data-action="blockuser" data-id="${u.id}" data-v="${u.blocked ? "0" : "1"}">${u.blocked ? "Sblocca" : "Blocca"}</button>` : `<button class="btn sm" data-action="setrole" data-id="${u.id}" data-role="rep">Rendi rappresentante</button>`}<button class="btn sm" data-action="deluser" data-id="${u.id}">Rimuovi accesso</button>`}</div></div>`;
+  const strong = S.events.filter((e) => TYPES[e.type]?.strong), bySub = {}, byMon = {};
+  strong.forEach((e) => { bySub[e.subjectId || ""] = (bySub[e.subjectId || ""] || 0) + 1; byMon[e.date.slice(0, 7)] = (byMon[e.date.slice(0, 7)] || 0) + 1; });
+  const subRows = Object.entries(bySub).sort((a, b) => b[1] - a[1]), monRows = Object.entries(byMon).sort();
+  const mx = Math.max(1, ...subRows.map((r) => r[1]), ...monRows.map((r) => r[1]));
+  const cfg = S.cfg;
+  return `<div class="page-h"><h1>Amministratore</h1><span class="pill rep">Solo tu</span></div>
+  ${asec("Panoramica", `<div class="stats" style="grid-template-columns:repeat(2,1fr)">
+    <div class="stat"><b>${S.events.length}</b><span>eventi (${past} passati)</span></div><div class="stat"><b>${S.anns.length}</b><span>comunicazioni</span></div>
+    <div class="stat"><b>${S.users.filter((u) => u.role !== "student").length}</b><span>con permessi di modifica</span></div><div class="stat"><b>${S.users.length}</b><span>accessi registrati</span></div></div>`)}
+  ${asec("Chi è entrato", presence, "Confronto tra l'elenco della classe e i nomi scritti all'ingresso (l'ordine di nome e cognome non conta).")}
+  ${asec("Accessi e permessi", people.length ? people.map(urow).join("") : '<p class="muted small">Nessun altro accesso.</p>', "Puoi dare o togliere i permessi, bloccare un rappresentante o rimuovere un accesso (dovrà rientrare con il codice).")}
+  <section class="card"><div class="card-h"><h3>Codici</h3><button class="btn sm" data-action="newcode">${ic("plus", 15)} Nuovo</button></div>
+    <p class="muted small" style="margin-bottom:8px">Senza un codice valido nessuno vede il calendario. Elimina un codice per non farlo usare più (chi è già entrato resta dentro).</p>
+    ${S.scodes.length + S.codes.length ? codeRows(S.scodes, "studentCodes", "Studenti") + codeRows(S.codes, "repCodes", "Rappresentanti") : '<p class="muted small">Nessun codice: crea il primo codice per gli studenti.</p>'}</section>
+  <section class="card"><h3 style="margin-bottom:10px">Sito</h3><form id="siteform" class="form">
+    <label>Nome della classe<input name="className" maxlength="40" value="${esc(cfg.className || "")}" placeholder="${esc(CLASS_NAME)}"></label>
+    <label>Colore<select name="accent">${PALETTE_SITE.map(([v, l]) => `<option value="${v}" ${(cfg.accent || "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+    <label>Avviso fisso per tutta la classe (vuoto = nessuno)<textarea name="banner" rows="2" maxlength="300">${esc(cfg.banner || "")}</textarea></label>
+    <label class="check"><input type="checkbox" name="readOnly" ${cfg.readOnly ? "checked" : ""}> Sola lettura: i rappresentanti non possono modificare</label>
+    <div class="sheet-f" style="margin-top:0"><button class="btn primary" type="submit">Salva</button></div></form></section>
+  ${asec("Statistiche (verifiche e interrogazioni)", `${subRows.length ? `<h4 class="pgh">Per materia</h4>${subRows.map(([id, n]) => bar(subj(id).name, n, mx, subj(id).color)).join("")}<h4 class="pgh">Per mese</h4>${monRows.map(([k, n]) => bar(cap(fmt(k + "-01", { month: "long", year: "numeric" })), n, mx, "var(--accent)")).join("")}` : '<p class="muted small">Ancora nessun dato.</p>'}`)}
+  ${asec("Cestino", S.trash.length ? S.trash.map((x) => `<div class="crow"><div class="grow"><b>${esc(x.title)}</b><span>era previsto il ${short(x.date)} · eliminato ${ago(tms(x.deletedAt) || Date.now())}</span></div><button class="btn sm" data-action="restoretrash" data-id="${x.id}">Ripristina</button></div>`).join("") + `<button class="btn sm" style="margin-top:10px" data-action="emptytrash">Svuota cestino</button>` : '<p class="muted small">Vuoto. Gli eventi eliminati restano qui per 30 giorni.</p>', "")}
+  ${asec("Modelli di evento", templates().length ? templates().map((x) => `<div class="crow"><div class="grow"><b>${esc(x.name)}</b><span>${esc(x.title)}${x.time ? " · " + esc(x.time) : ""}</span></div><button class="icon-btn sm" data-action="deltpl" data-id="${x.id}" aria-label="Elimina">${ic("trash", 16)}</button></div>`).join("") : '<p class="muted small">Nessun modello. Crealo dal modulo di un evento (“Salva modello”).</p>')}
+  ${asec("Dati", `<div class="list-actions">
+    <button class="btn" data-action="backup">${ic("download", 16)} Scarica backup completo (.json)</button>
+    <label class="btn" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px">${ic("plus", 16)} Ripristina da backup<input id="bkfile" type="file" accept=".json,application/json" hidden></label>
+    <button class="btn" data-action="cleanold">${ic("trash", 16)} Elimina eventi vecchi…</button>
+    <button class="btn danger" data-action="closeyear">Chiudi l'anno scolastico…</button></div>
+    <p class="muted small" style="margin-top:8px">Il backup contiene eventi, materie, comunicazioni, elenchi e modelli.</p>`)}`;
+}
+
 const nameForm = (id, title, label, val, ok, extra = "") => openModal(`<form id="${id}" class="form" data-id="${extra}">
   <div class="sheet-h"><h3>${title}</h3><button type="button" class="icon-btn" data-action="closemodal" aria-label="Chiudi">${ic("x")}</button></div>
   ${label === "names" ? `<label>Un nome per riga<textarea name="v" rows="12" placeholder="Rossi Mario&#10;Bianchi Anna">${esc(val)}</textarea></label>` : `<label>Nome dell'elenco<input name="v" required maxlength="80" value="${esc(val)}" placeholder="Es. Soldi gita"></label>`}
@@ -828,10 +888,21 @@ const unseen = () => {
   const seen = +localStorage.getItem("seen") || 0, me = S.user?.uid;
   return S.log.filter((l) => ms(l.at) > seen && l.userId !== me).length + S.anns.filter((a) => ms(a.createdAt) > seen && a.createdBy !== me).length;
 };
+function viewGate() {
+  return `<section class="card gate"><h2>${esc(cls())}</h2><p class="muted" style="margin:6px 0 14px">Per vedere il calendario scrivi il tuo cognome e nome e il codice che ti ha dato il rappresentante.</p>
+    <div class="form"><label>Cognome e nome<input id="gname" maxlength="60" autocomplete="name" placeholder="Es. Rossi Mario"></label>
+    <label>Codice della classe<input id="gcode" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    <button class="btn primary" data-action="gateenter">Entra</button></div>
+    <p class="muted small" style="margin-top:14px">Sei amministratore con email? <button class="btn sm" data-action="auth">Accedi con email</button></p></section>`;
+}
 function renderChrome() {
+  if (!S.hasProfile) {
+    $("#top").innerHTML = `<div class="brand"><span class="logo">${ic("cal", 17)}</span><span>${esc(cls())}</span></div><span class="spacer"></span><button class="icon-btn" data-action="toggletheme" aria-label="Cambia tema">${ic(document.documentElement.dataset.theme === "dark" ? "sun" : "moon", 20)}</button>`;
+    $("#tabs").innerHTML = ""; return;
+  }
   const initials = (S.name || "").trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   const dark = document.documentElement.dataset.theme === "dark";
-  $("#top").innerHTML = `<div class="brand" role="button" tabindex="0" data-action="nav" data-view="home" style="cursor:pointer"><span class="logo">${ic("cal", 17)}</span><span>${esc(CLASS_NAME)}</span></div><span class="spacer"></span>
+  $("#top").innerHTML = `<div class="brand" role="button" tabindex="0" data-action="nav" data-view="home" style="cursor:pointer"><span class="logo">${ic("cal", 17)}</span><span>${esc(cls())}</span></div><span class="spacer"></span>
     <button class="icon-btn" data-action="search" aria-label="Cerca">${ic("search", 20)}</button>
     <button class="icon-btn" data-action="toggletheme" aria-label="Cambia tema">${ic(dark ? "sun" : "moon", 20)}</button>
     <button class="avatar" data-action="nav" data-view="account" aria-label="Account">${S.user && initials ? esc(initials) : ic("user", 17)}</button>`;
@@ -850,12 +921,16 @@ function render() {
     main.innerHTML = `${S.setupMsg ? `<section class="card err"><h2 style="margin-bottom:8px">Problema di connessione</h2><p>${esc(S.setupMsg)}</p></section>` : `<section class="card"><h2 style="margin-bottom:8px">Manca la configurazione di Firebase</h2><p class="muted">Apri questo file HTML con un editor di testo e incolla le chiavi del tuo progetto Firebase nel blocco CONFIGURAZIONE, in cima allo script. Poi ricarica la pagina.</p></section>`}`;
     return;
   }
+  document.body.classList.toggle("gated", !S.hasProfile);
+  if (!S.authReady) { renderChrome(); main.innerHTML = '<p class="muted center">Caricamento…</p>'; return; }
+  if (!S.hasProfile) { renderChrome(); main.innerHTML = viewGate(); return; }
   if (S.view === "notices") localStorage.setItem("seen", String(Date.now()));
   renderChrome();
   const err = S.error ? `<section class="card err"><b>${esc(S.error)}</b></section>` : "";
   if (!(S.loaded.events && S.loaded.subjects)) { main.innerHTML = err || '<p class="muted center">Caricamento…</p>'; return; }
   const vw = (REP_VIEWS.includes(S.view) && !isRep()) || (S.view === "admin" && !isAdmin()) ? "home" : S.view;
-  main.innerHTML = err + { home: viewHome, cal: viewCalendar, notices: viewNotices, account: viewAccount, class: viewClass, other: viewOther, admin: viewAdmin }[vw]();
+  const cfgBanner = S.cfg.banner ? `<section class="card banner">${ic("bell", 20)}<div><span class="eyebrow">Avviso della classe</span><p>${esc(S.cfg.banner)}</p></div></section>` : "";
+  main.innerHTML = err + cfgBanner + { home: viewHome, cal: viewCalendar, notices: viewNotices, account: viewAccount, class: viewClass, other: viewOther, admin: viewAdmin }[vw]();
   if (keep) { const el = document.getElementById(keep.id); if (el) { el.focus(); try { el.setSelectionRange(keep.pos, keep.pos); } catch {} } }
 }
 
@@ -871,18 +946,35 @@ function notifyChange(title, body) {
     try { new Notification(title, { body, icon: "" }); } catch {}
   }
 }
-function listen() {
+let dataUnsubs = [], dataOn = false;
+function stopData() {
+  dataUnsubs.forEach((u) => u()); dataUnsubs = []; dataOn = false;
+  S.events = []; S.subjects = []; S.anns = []; S.log = []; S.cfg = {}; S.loaded.events = S.loaded.subjects = false; applyCfg();
+}
+function applyCfg() {
+  const r = document.documentElement.style, c = S.cfg.accent;
+  if (c && /^#[0-9a-f]{6}$/i.test(c)) { r.setProperty("--accent", c); r.setProperty("--accent-soft", `color-mix(in srgb, ${c} 14%, var(--surface))`); r.setProperty("--accent-ink", "#fff"); }
+  else ["--accent", "--accent-soft", "--accent-ink"].forEach((k) => r.removeProperty(k));
+  document.title = cls();
+}
+function startData() {
+  if (dataOn) return;
+  dataOn = true;
   const err = (e) => {
+    if (e.code === "permission-denied" && !S.hasProfile) return;
     S.error = e.code === "permission-denied"
-      ? "Permessi insufficienti: pubblica le regole di sicurezza di Firestore (file firestore.rules)."
+      ? "Permessi insufficienti: pubblica le regole di sicurezza di Firestore."
       : `Errore di connessione: ${e.message}`;
     S.loaded.events = S.loaded.subjects = true;
     render();
   };
-  onSnapshot(collection(db, "subjects"), (s) => { S.subjects = mapDocs(s).sort((a, b) => a.name.localeCompare(b.name)); S.loaded.subjects = true; S.error = ""; render(); }, err);
-  onSnapshot(query(collection(db, "events"), orderBy("date")), (s) => { S.events = mapDocs(s); S.loaded.events = true; render(); }, err);
+  const sub = (...a) => dataUnsubs.push(onSnapshot(...a));
+  sub(collection(db, "subjects"), (s) => { S.subjects = mapDocs(s).sort((a, b) => a.name.localeCompare(b.name)); S.loaded.subjects = true; S.error = ""; render(); }, err);
+  let firstE = true;
+  sub(query(collection(db, "events"), orderBy("date")), (s) => { S.events = mapDocs(s); S.loaded.events = true; render(); if (firstE) { firstE = false; remindTomorrow(); } }, err);
+  sub(doc(db, "config", "site"), (d) => { S.cfg = d.exists() ? d.data() : {}; applyCfg(); render(); }, () => {});
   let firstA = true;
-  onSnapshot(query(collection(db, "announcements"), orderBy("createdAt", "desc"), limit(100)), (s) => {
+  sub(query(collection(db, "announcements"), orderBy("createdAt", "desc"), limit(100)), (s) => {
     if (!firstA && !s.metadata.fromCache) s.docChanges().forEach((c) => {
       const a = c.doc.data();
       if (c.type === "added" && !c.doc.metadata.hasPendingWrites && a.createdBy !== S.user?.uid && ms(a.createdAt) > Date.now() - 12e4) notifyChange(a.important ? "Comunicazione importante" : "Nuova comunicazione", a.title);
@@ -890,32 +982,58 @@ function listen() {
     firstA = false; S.anns = mapDocs(s); render();
   }, err);
   let firstL = true;
-  onSnapshot(query(collection(db, "changelog"), orderBy("at", "desc"), limit(100)), (s) => {
+  sub(query(collection(db, "changelog"), orderBy("at", "desc"), limit(100)), (s) => {
     if (!firstL && !s.metadata.fromCache) s.docChanges().forEach((c) => {
       const l = c.doc.data();
       if (c.type === "added" && !c.doc.metadata.hasPendingWrites && l.userId !== S.user?.uid && ms(l.at) > Date.now() - 12e4) notifyChange("Calendario aggiornato", logText(l).text);
     });
     firstL = false; S.log = mapDocs(s); render();
   }, err);
-
-  let unsubProfile = null, unsubInfo = null, unsubAdmin = null;
+}
+function remindTomorrow() {
+  if (!isAdmin()) return;
+  const t = addDays(todayStr(), 1), list = S.events.filter((e) => occurs(e, t));
+  const key = "rem" + todayStr();
+  if (!list.length || localStorage.getItem(key)) return;
+  localStorage.setItem(key, "1");
+  notifyChange("Domani", list.map((e) => e.title).slice(0, 4).join(", "));
+}
+function listen() {
+  let unsubProfile = null, unsubInfo = null, unsubAdmin = null, roleKnown = false, touched = false;
   onAuthStateChanged(auth, (user) => {
-    S.user = user;
-    unsubProfile?.(); unsubProfile = null; unsubInfo?.(); unsubInfo = null; S.info = []; unsubAdmin?.forEach((u) => u()); unsubAdmin = null; S.users = []; S.codes = [];
+    S.user = user; S.authReady = !user; roleKnown = false; touched = false;
+    unsubProfile?.(); unsubProfile = null; unsubInfo?.(); unsubInfo = null; S.info = [];
+    unsubAdmin?.forEach((u) => u()); unsubAdmin = null; S.users = []; S.codes = []; S.scodes = []; S.trash = [];
+    stopData();
     if (!user) { S.role = "student"; S.name = ""; S.hasProfile = false; render(); return; }
-    S.name = user.displayName || (user.email ? user.email.split("@")[0] : "Rappresentante");
-    unsubProfile = onSnapshot(doc(db, "users", user.uid), (d) => {
-      S.hasProfile = d.exists();
-      S.role = d.exists() && ["rep", "admin"].includes(d.data().role) ? d.data().role : "student";
+    S.name = user.displayName || (user.email ? user.email.split("@")[0] : "");
+    unsubProfile = onSnapshot(doc(db, "users", user.uid), { includeMetadataChanges: true }, (d) => {
+      S.authReady = true;
+      const data = d.exists() ? d.data() : {};
+      const ready = d.exists() && (dataOn || !d.metadata.hasPendingWrites);
+      S.hasProfile = ready;
+      if (!d.metadata.hasPendingWrites || !roleKnown) {
+        S.role = ready && !data.blocked && ["rep", "admin"].includes(data.role) ? data.role : "student";
+        roleKnown = true;
+      }
+      if (data.displayName) S.name = data.displayName;
+      if (!ready) { if (dataOn) stopData(); render(); return; }
+      startData();
+      if (!touched) { touched = true; updateDoc(doc(db, "users", user.uid), { lastSeen: serverTimestamp() }).catch(() => {}); }
       if (S.role === "admin" && !unsubAdmin) unsubAdmin = [
         onSnapshot(collection(db, "users"), (q) => { S.users = mapDocs(q); render(); }, () => {}),
-        onSnapshot(collection(db, "repCodes"), (q) => { S.codes = mapDocs(q); render(); }, () => {})];
-      if (S.role !== "admin" && unsubAdmin) { unsubAdmin.forEach((u) => u()); unsubAdmin = null; S.users = []; S.codes = []; }
+        onSnapshot(collection(db, "repCodes"), (q) => { S.codes = mapDocs(q); render(); }, () => {}),
+        onSnapshot(collection(db, "studentCodes"), (q) => { S.scodes = mapDocs(q); render(); }, () => {}),
+        onSnapshot(collection(db, "trash"), (q) => {
+          S.trash = mapDocs(q).sort((a, b) => ms(b.deletedAt) - ms(a.deletedAt)); render();
+          const old = S.trash.filter((t) => ms(t.deletedAt) < Date.now() - 30 * 864e5);
+          if (old.length) { const b = writeBatch(db); old.forEach((t) => b.delete(doc(db, "trash", t.id))); b.commit().catch(() => {}); }
+        }, () => {})];
+      if (S.role !== "admin" && unsubAdmin) { unsubAdmin.forEach((u) => u()); unsubAdmin = null; S.users = []; S.codes = []; S.scodes = []; S.trash = []; }
       if (S.role !== "student" && !unsubInfo) unsubInfo = onSnapshot(collection(db, "classinfo"), (q) => { S.info = mapDocs(q); render(); }, () => { S.info = []; });
       if (S.role === "student" && unsubInfo) { unsubInfo(); unsubInfo = null; S.info = []; }
-      if (d.exists() && d.data().displayName) S.name = d.data().displayName;
       render();
-    }, () => { S.role = "student"; render(); });
+    }, () => { S.authReady = true; S.role = "student"; render(); });
   });
 }
 
@@ -948,11 +1066,21 @@ async function deleteEvent(id) {
   if (!e) return;
   const batch = writeBatch(db);
   batch.delete(doc(db, "events", id));
+  batch.set(doc(db, "trash", id), { ...evData(e), deletedAt: serverTimestamp(), deletedBy: S.user.uid });
   batch.set(doc(collection(db, "changelog")), {
     eventId: id, title: e.title, type: e.type, subjectId: e.subjectId || "", date: e.date,
     action: "deleted", details: {}, userId: S.user.uid, userName: S.name, at: serverTimestamp(),
   });
   await batch.commit();
+}
+async function restoreTrash(id) {
+  const t = S.trash.find((x) => x.id === id);
+  if (!t) return;
+  const b = writeBatch(db), now = serverTimestamp();
+  b.set(doc(db, "events", id), { ...evData(t), createdBy: S.user.uid, createdAt: now, updatedAt: now });
+  b.delete(doc(db, "trash", id));
+  b.set(doc(collection(db, "changelog")), { eventId: id, title: t.title, type: t.type, subjectId: t.subjectId || "", date: t.date, action: "created", details: {}, userId: S.user.uid, userName: S.name, at: now });
+  await b.commit();
 }
 async function moveEvent(id, date, canUndo = true) {
   const e = S.events.find((x) => x.id === id);
@@ -989,6 +1117,7 @@ function eventForm(ev, presetDate) {
   const e = ev || { title: "", subjectId: "", type: "verifica", date: presetDate || S.selected || todayStr(), time: "", description: "", topics: "", notes: "", links: [] };
   openModal(`<form id="evform" class="form" data-id="${ev ? ev.id : ""}">
     <div class="sheet-h"><h3>${ev ? "Modifica evento" : "Nuovo evento"}</h3><button type="button" class="icon-btn" data-action="closemodal" aria-label="Chiudi">${ic("x")}</button></div>
+    ${!ev && isAdmin() ? `<label>Modello<select name="tplsel"><option value="">— Nessuno —</option>${templates().map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></label>` : ""}
     <label>Titolo<input name="title" required maxlength="200" value="${esc(e.title)}" placeholder="Es. Verifica sui logaritmi"></label>
     <div class="row2">
       <label>Materia<select name="subjectId"><option value="">— Nessuna —</option>${S.subjects.map((s) => `<option value="${s.id}" ${e.subjectId === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
@@ -996,11 +1125,13 @@ function eventForm(ev, presetDate) {
     </div>
     <div class="row2"><label>Data (o inizio)<input type="date" name="date" required value="${esc(e.date)}"></label><label>Fino al (facoltativo)<input type="date" name="endDate" value="${esc(e.endDate || "")}"></label></div>
     <div class="row2" id="timerow"><label>Dalle ore (facoltativo)<input type="time" name="time" value="${esc(e.time || "")}"></label><label>Alle ore (facoltativo)<input type="time" name="endTime" value="${esc(e.endTime || "")}"></label></div>
+    ${!ev && isAdmin() ? `<div class="row2"><label>Ripeti<select name="repeat"><option value="">Mai</option><option value="7">Ogni settimana</option><option value="14">Ogni 2 settimane</option></select></label><label>Ripeti fino al<input type="date" name="until"></label></div>` : ""}
     <div id="loadhint" class="loadmsg"></div>
     <label>Descrizione<textarea name="description" rows="2">${esc(e.description)}</textarea></label>
     <label>Argomenti da preparare<textarea name="topics" rows="2">${esc(e.topics)}</textarea></label>
     <label>Note aggiuntive<textarea name="notes" rows="2">${esc(e.notes)}</textarea></label>
     <fieldset><legend>Allegati e link</legend><div id="links">${(e.links || []).map(linkRow).join("")}</div><button type="button" class="btn sm" data-action="addlink">${ic("plus", 15)} Aggiungi link</button></fieldset>
+    ${isAdmin() ? `<div class="linkrow"><input name="tplname" placeholder="Nome del modello" maxlength="60"><button type="button" class="btn sm" data-action="savetpl">Salva modello</button></div>` : ""}
     <div class="sheet-f">${ev ? `<button type="button" class="btn danger" data-action="del" data-id="${ev.id}">${ic("trash", 16)} Elimina</button>` : ""}<span class="spacer"></span><button type="button" class="btn" data-action="closemodal">Annulla</button><button class="btn primary" type="submit">Salva</button></div>
   </form>`, (sheet) => updateLoadHint(sheet.querySelector("#evform")));
 }
@@ -1025,6 +1156,21 @@ async function submitEvent(form) {
   if (data.endDate) { data.time = ""; data.endTime = ""; }
   if (data.endTime && !data.time) data.endTime = "";
   if (data.endTime && data.endTime <= data.time) { toast("L'ora di fine deve essere dopo quella di inizio."); return; }
+  const rp = isAdmin() && !form.dataset.id ? +fd.get("repeat") || 0 : 0, until = String(fd.get("until") || "");
+  if (rp) {
+    if (!until || until <= data.date) { toast("Scegli fino a quando ripetere l'evento."); return; }
+    const dates = [];
+    for (let d = data.date; d <= until && dates.length < 60; d = addDays(d, rp)) dates.push(d);
+    btn.disabled = true;
+    try {
+      const b = writeBatch(db), now = serverTimestamp();
+      dates.forEach((d) => b.set(doc(collection(db, "events")), { ...data, date: d, endDate: data.endDate ? addDays(data.endDate, diffDays(d, data.date)) : "", createdBy: S.user.uid, createdAt: now, updatedAt: now }));
+      b.set(doc(collection(db, "changelog")), { eventId: "", title: data.title, type: data.type, subjectId: data.subjectId || "", date: data.date, action: "created", details: { repeat: dates.length }, userId: S.user.uid, userName: S.name, at: now });
+      await b.commit();
+      S.selected = data.date; S.cursor = data.date; closeModal(); render(); toast(`Creati ${dates.length} eventi`);
+    } catch (err) { btn.disabled = false; fail(err); }
+    return;
+  }
   btn.disabled = true;
   try {
     await saveEvent(form.dataset.id || null, data);
@@ -1059,15 +1205,14 @@ function authModal(mode = "login") {
     ${reg ? '<label>Nome e cognome<input name="name" required maxlength="60" autocomplete="name"></label>' : ""}
     <label>Email<input name="email" type="email" required autocomplete="email"></label>
     <label>Password<input name="password" type="password" required minlength="6" autocomplete="${reg ? "new-password" : "current-password"}"></label>
-    ${reg ? '<label>Codice rappresentante (solo se lo sei)<input name="code" autocomplete="off"></label>' : '<button type="button" class="btn sm" style="align-self:flex-start" data-action="reset">Password dimenticata?</button>'}
+    ${reg ? '<label>Codice della classe<input name="code" required autocomplete="off"></label>' : '<button type="button" class="btn sm" style="align-self:flex-start" data-action="reset">Password dimenticata?</button>'}
     <div class="formerr" id="autherr"></div>
     <div class="sheet-f"><span class="spacer"></span><button class="btn primary" type="submit">${reg ? "Crea account" : "Accedi"}</button></div></form>`);
 }
 
 async function ensureProfile(name) {
   if (S.hasProfile) return;
-  await setDoc(doc(db, "users", S.user.uid), { displayName: name || S.name, role: "student", createdAt: serverTimestamp() });
-  S.hasProfile = true;
+  throw new Error("profilo mancante");
 }
 async function claimCode(code) {
   await ensureProfile();
@@ -1085,13 +1230,9 @@ async function submitAuth(form) {
       const cred = await createUserWithEmailAndPassword(auth, email, pw);
       S.user = cred.user; S.hasProfile = false;
       await updateProfile(cred.user, { displayName: name });
-      await setDoc(doc(db, "users", cred.user.uid), { displayName: name, role: "student", createdAt: serverTimestamp() });
-      S.hasProfile = true;
       const code = String(fd.get("code") || "").trim();
-      if (code) {
-        try { await claimCode(code); toast("Accesso come rappresentante attivato"); }
-        catch { toast("Account creato, ma il codice rappresentante non è valido."); }
-      }
+      await setDoc(doc(db, "users", cred.user.uid), { displayName: name, role: "student", createdAt: serverTimestamp(), code });
+      for (const role of ["rep", "admin"]) { try { await updateDoc(doc(db, "users", cred.user.uid), { role, repCode: code }); break; } catch {} }
     }
     closeModal();
   } catch (err) { btn.disabled = false; box.textContent = authMsg(err); }
@@ -1120,7 +1261,7 @@ const icsEsc = (s) => String(s).replace(/\\/g, "\\\\").replace(/;/g, "\\;").repl
 const fold = (l) => (l.length <= 60 ? l : l.match(/.{1,60}/gu).join("\r\n "));
 function buildIcs(list) {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+/, "");
-  const out = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Calendario di classe//IT", "CALSCALE:GREGORIAN", `X-WR-CALNAME:${icsEsc(CLASS_NAME)}`];
+  const out = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Calendario di classe//IT", "CALSCALE:GREGORIAN", `X-WR-CALNAME:${icsEsc(cls())}`];
   for (const e of list) {
     const s = subj(e.subjectId);
     out.push("BEGIN:VEVENT", `UID:${e.id}@calendario-classe`, `DTSTAMP:${stamp}`,
@@ -1172,7 +1313,7 @@ function buildMonthPdf(JsPDF, cursor) {
   const monthTitle = cap(fmt(first, { month: "long", year: "numeric" }));
   const header = (suffix = "") => {
     doc.setFont("helvetica", "bold"); doc.setFontSize(16); doc.setTextColor(32, 35, 39);
-    doc.text(pdfTxt(`${CLASS_NAME} - ${monthTitle}${suffix}`), M, 14);
+    doc.text(pdfTxt(`${cls()} - ${monthTitle}${suffix}`), M, 14);
     doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(106, 111, 119);
     doc.text(`Generato il ${new Intl.DateTimeFormat("it-IT", { dateStyle: "long" }).format(new Date())}`, W - M, 14, { align: "right" });
   };
@@ -1494,25 +1635,88 @@ const actions = {
     try { await claimCode(code); toast("Codice accettato"); } catch (err) { toast(`Codice non valido o regole non aggiornate. Dettaglio: ${err?.code || err?.message || err}`); }
   },
   newann: () => annForm(),
+  gateenter: async (el) => {
+    const name = ($("#gname")?.value || "").trim().slice(0, 60), code = ($("#gcode")?.value || "").trim();
+    if (!name || !code) { toast("Scrivi il tuo nome e il codice."); return; }
+    el.disabled = true;
+    try {
+      const user = auth.currentUser || (await signInAnonymously(auth)).user;
+      await setDoc(doc(db, "users", user.uid), { displayName: name, role: "student", createdAt: serverTimestamp(), code });
+    } catch (err) {
+      console.error(err); el.disabled = false;
+      toast(err?.code === "auth/operation-not-allowed" ? "Manca l'accesso anonimo in Firebase (Authentication > Sign-in method > Anonymous)." : "Codice non valido o scaduto.");
+      return;
+    }
+    for (const role of ["rep", "admin"]) { try { await updateDoc(doc(db, "users", auth.currentUser.uid), { role, repCode: code }); break; } catch {} }
+    el.disabled = false;
+  },
   setrole: async (el) => {
     const r = el.dataset.role;
     if (!(await ask(r === "rep" ? "Dare i permessi?" : "Togliere i permessi?", r === "rep" ? "Potrà modificare calendario ed elenchi." : "Tornerà a poter solo consultare.", "Conferma"))) return;
     try { await updateDoc(doc(db, "users", el.dataset.id), { role: r }); } catch (err) { fail(err); }
   },
+  blockuser: async (el) => { try { await updateDoc(doc(db, "users", el.dataset.id), { blocked: el.dataset.v === "1" }); } catch (err) { fail(err); } },
+  deluser: async (el) => {
+    if (!(await ask("Rimuovere questo accesso?", "Dovrà rientrare con il codice della classe.", "Rimuovi"))) return;
+    try { await deleteDoc(doc(db, "users", el.dataset.id)); } catch (err) { fail(err); }
+  },
   newcode: () => openModal(`<form id="codeform" class="form"><div class="sheet-h"><h3>Nuovo codice</h3><button type="button" class="icon-btn" data-action="closemodal" aria-label="Chiudi">${ic("x")}</button></div>
-    <label>Codice (lungo e non banale, senza “/”)<input name="v" required minlength="8" maxlength="60" value="${codeGen()}" autocomplete="off"></label>
+    <label>Per chi<select name="col"><option value="studentCodes">Studenti (solo consultazione)</option><option value="repCodes">Rappresentanti (possono modificare)</option></select></label>
+    <label>Validità<select name="exp"><option value="0">Senza scadenza</option><option value="1">24 ore</option><option value="7">7 giorni</option><option value="30">30 giorni</option></select></label>
+    <label>Codice (lungo, senza “/”)<input name="v" required minlength="6" maxlength="60" value="${codeGen("classe")}" autocomplete="off"></label>
     <div class="sheet-f"><span class="spacer"></span><button type="button" class="btn" data-action="closemodal">Annulla</button><button class="btn primary" type="submit">Crea</button></div></form>`),
   delcode: async (el) => {
-    if (!(await ask("Eliminare il codice?", "Nessuno potrà più usarlo per diventare rappresentante."))) return;
-    try { await deleteDoc(doc(db, "repCodes", el.dataset.id)); } catch (err) { fail(err); }
+    if (!(await ask("Eliminare il codice?", "Nessuno potrà più usarlo per entrare."))) return;
+    try { await deleteDoc(doc(db, el.dataset.col, el.dataset.id)); } catch (err) { fail(err); }
   },
-  backup: () => {
-    const clean = (l) => l.map((x) => JSON.parse(JSON.stringify(x, (k, v) => (v && typeof v === "object" && typeof v.toMillis === "function" ? v.toMillis() : v))));
-    const data = { creato: new Date().toISOString(), eventi: clean(S.events), materie: clean(S.subjects), comunicazioni: clean(S.anns), classe: clean(S.info) };
-    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: "application/json" }));
-    const a = Object.assign(document.createElement("a"), { href: url, download: `backup-calendario-${todayStr()}.json` });
-    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+  restoretrash: async (el) => { try { await restoreTrash(el.dataset.id); toast("Evento ripristinato"); } catch (err) { fail(err); } },
+  emptytrash: async () => {
+    if (!(await ask("Svuotare il cestino?", "Gli eventi eliminati non si potranno più recuperare.", "Svuota"))) return;
+    try { for (let i = 0; i < S.trash.length; i += 400) { const b = writeBatch(db); S.trash.slice(i, i + 400).forEach((t) => b.delete(doc(db, "trash", t.id))); await b.commit(); } } catch (err) { fail(err); }
   },
+  deltpl: async (el) => { try { await deleteDoc(doc(db, "classinfo", el.dataset.id)); } catch (err) { fail(err); } },
+  savetpl: async () => {
+    const f = $("#evform"); if (!f) return;
+    const fd = new FormData(f), name = String(fd.get("tplname") || "").trim();
+    if (!name) { toast("Scrivi il nome del modello."); return; }
+    try {
+      await addDoc(collection(db, "classinfo"), { kind: "tpl", name, title: String(fd.get("title") || "").trim(), type: fd.get("type"), subjectId: fd.get("subjectId") || "", time: fd.get("time") || "", endTime: fd.get("endTime") || "", description: String(fd.get("description") || "").trim(), topics: String(fd.get("topics") || "").trim(), createdBy: S.user.uid });
+      toast("Modello salvato");
+    } catch (err) { fail(err); }
+  },
+  undolog: async (el) => {
+    const l = S.log.find((x) => x.id === el.dataset.id); if (!l || !canUndo(l)) return;
+    try {
+      if (l.action === "created") { await deleteEvent(l.eventId); toast("Evento rimosso (è nel cestino)"); }
+      else if (l.action === "deleted") { await restoreTrash(l.eventId); toast("Evento ripristinato"); }
+      else {
+        const e = S.events.find((x) => x.id === l.eventId), patch = {};
+        undoKeys(l).forEach((k) => { patch[k] = l.details[k].from; });
+        await saveEvent(e.id, { ...evData(e), ...patch }); toast("Modifica annullata");
+      }
+    } catch (err) { fail(err); }
+  },
+  listpdf: async (el) => {
+    const l = S.info.find((x) => x.id === el.dataset.id); if (!l) return;
+    const J = await loadJsPdf(), pd = new J({ unit: "mm", format: "a4" }), it = l.items || [], done = it.filter((x) => x.d).length;
+    pd.setTextColor(0, 0, 0); pd.setFont("helvetica", "bold"); pd.setFontSize(18); pd.text(pdfTxt(l.name), 15, 18);
+    pd.setFont("helvetica", "normal"); pd.setFontSize(10); pd.text(pdfTxt(`${cls()} - ${longDate(todayStr())} - ${done} su ${it.length} (mancano ${it.length - done})`), 15, 25);
+    let y = 36;
+    it.forEach((x) => {
+      if (y > 280) { pd.addPage(); y = 20; }
+      pd.setDrawColor(0, 0, 0); pd.setLineWidth(0.4); pd.rect(15, y - 4.2, 5, 5);
+      if (x.d) { pd.line(15.8, y - 3.4, 19.2, y + 0.2); pd.line(19.2, y - 3.4, 15.8, y + 0.2); }
+      pd.setFont("helvetica", "normal"); pd.setFontSize(12); pd.text(pdfTxt(x.n), 25, y);
+      pd.setFont("helvetica", "bold"); pd.setFontSize(9); pd.text(x.d ? "FATTO" : "MANCA", 195, y, { align: "right" });
+      y += 9;
+    });
+    pd.save(`${pdfTxt(l.name).replace(/[^a-zA-Z0-9]+/g, "-")}.pdf`);
+  },
+  backup: () => backupDownload(),
+  closeyear: () => openModal(`<form id="yearform" class="form"><div class="sheet-h"><h3>Chiudi l'anno scolastico</h3><button type="button" class="icon-btn" data-action="closemodal" aria-label="Chiudi">${ic("x")}</button></div>
+    <p class="muted">Scarica un backup, poi elimina tutti gli eventi e le comunicazioni e azzera le spunte degli elenchi. Restano materie, elenco della classe, modelli e codici.</p>
+    <label>Scrivi ARCHIVIA per confermare<input name="v" required autocomplete="off"></label>
+    <div class="sheet-f"><span class="spacer"></span><button type="button" class="btn" data-action="closemodal">Annulla</button><button class="btn danger" type="submit">Archivia</button></div></form>`),
   cleanold: () => openModal(`<form id="cleanform" class="form"><div class="sheet-h"><h3>Elimina eventi vecchi</h3><button type="button" class="icon-btn" data-action="closemodal" aria-label="Chiudi">${ic("x")}</button></div>
     <label>Elimina gli eventi finiti da più di<select name="v"><option value="30">30 giorni</option><option value="90" selected>3 mesi</option><option value="180">6 mesi</option><option value="365">1 anno</option></select></label>
     <p class="muted small">Scarica prima un backup se vuoi poterli recuperare.</p>
@@ -1559,7 +1763,7 @@ const actions = {
   share: async () => {
     const url = location.href.split("#")[0];
     try {
-      if (navigator.share) await navigator.share({ title: CLASS_NAME, url });
+      if (navigator.share) await navigator.share({ title: cls(), url });
       else { await navigator.clipboard.writeText(url); toast("Link copiato"); }
     } catch {}
   },
@@ -1574,6 +1778,31 @@ const actions = {
   notif: async () => { if ("Notification" in window) { await Notification.requestPermission(); render(); } },
 };
 
+function backupDownload() {
+  const clean = (l) => l.map((x) => JSON.parse(JSON.stringify(x, (k, v) => (v && typeof v === "object" && typeof v.toMillis === "function" ? v.toMillis() : v))));
+  const data = { creato: new Date().toISOString(), eventi: clean(S.events), materie: clean(S.subjects), comunicazioni: clean(S.anns), classe: clean(S.info) };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: "application/json" }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: `backup-calendario-${todayStr()}.json` });
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+async function restoreBackup(file) {
+  if (!file || !isAdmin()) return;
+  let d; try { d = JSON.parse(await file.text()); } catch { toast("File non valido."); return; }
+  const parts = [["events", d.eventi], ["subjects", d.materie], ["announcements", d.comunicazioni], ["classinfo", d.classe]].map(([c, a]) => [c, Array.isArray(a) ? a.filter((x) => x && x.id) : []]);
+  const ops = parts.flatMap(([c, a]) => a.map((x) => { const { id, ...data } = x; return [c, String(id), data]; }));
+  if (!ops.length) { toast("Il file non contiene dati."); return; }
+  if (!(await ask("Ripristinare il backup?", `Ci sono ${ops.length} elementi. Quelli con lo stesso identificativo verranno sovrascritti, gli altri restano.`, "Ripristina"))) return;
+  try {
+    for (let i = 0; i < ops.length; i += 400) { const b = writeBatch(db); ops.slice(i, i + 400).forEach(([c, id, data]) => b.set(doc(db, c, id), data)); await b.commit(); }
+    toast(`Ripristinati ${ops.length} elementi`);
+  } catch (err) { fail(err); }
+}
+function fillTpl(form, id) {
+  const t = templates().find((x) => x.id === id); if (!t || !form) return;
+  const set = (n, v) => { const el = form.elements[n]; if (el) el.value = v || ""; };
+  ["title", "subjectId", "type", "time", "endTime", "description", "topics"].forEach((k) => set(k, t[k]));
+  updateLoadHint(form);
+}
 function bind() {
   document.addEventListener("click", async (e) => {
     const el = e.target.closest("[data-action]");
@@ -1592,8 +1821,23 @@ function bind() {
     if (f.id === "evform") submitEvent(f);
     else if (f.id === "authform") submitAuth(f);
     else if (f.id === "codeform") {
-      const v = String(new FormData(f).get("v")).trim().replace(/\//g, "");
-      setDoc(doc(db, "repCodes", v), { attivo: true, creato: serverTimestamp() }).then(() => { closeModal(); toast("Codice creato"); }).catch(fail);
+      const fd = new FormData(f), v = String(fd.get("v")).trim().replace(/\//g, ""), days = +fd.get("exp");
+      setDoc(doc(db, String(fd.get("col")), v), { attivo: true, creato: serverTimestamp(), scade: days ? Date.now() + days * 864e5 : 0 }).then(() => { closeModal(); toast("Codice creato"); }).catch(fail);
+    }
+    else if (f.id === "siteform") {
+      const fd = new FormData(f);
+      setDoc(doc(db, "config", "site"), { className: String(fd.get("className") || "").trim(), accent: String(fd.get("accent") || ""), banner: String(fd.get("banner") || "").trim(), readOnly: fd.get("readOnly") === "on" }, { merge: true })
+        .then(() => toast("Salvato")).catch(fail);
+    }
+    else if (f.id === "yearform") {
+      if (String(new FormData(f).get("v")).trim().toUpperCase() !== "ARCHIVIA") { toast("Scrivi ARCHIVIA per confermare."); return; }
+      closeModal(); backupDownload();
+      (async () => {
+        const dels = [...S.events.map((x) => ["events", x.id]), ...S.anns.map((x) => ["announcements", x.id])];
+        for (let i = 0; i < dels.length; i += 400) { const b = writeBatch(db); dels.slice(i, i + 400).forEach(([c, id]) => b.delete(doc(db, c, id))); await b.commit(); }
+        const ls = lists(); if (ls.length) { const b = writeBatch(db); ls.forEach((l) => b.update(doc(db, "classinfo", l.id), { items: l.items.map((x) => ({ n: x.n, d: false })) })); await b.commit(); }
+        toast("Anno archiviato");
+      })().catch(fail);
     }
     else if (f.id === "cleanform") {
       const days = +new FormData(f).get("v"), lim = addDays(todayStr(), -days);
@@ -1630,6 +1874,8 @@ function bind() {
   document.addEventListener("change", async (e) => {
     const t = e.target;
     if (t.closest?.("#evform") && (t.name === "date" || t.name === "type" || t.name === "endDate")) updateLoadHint(t.closest("form"));
+    if (t.name === "tplsel") fillTpl(t.closest("form"), t.value);
+    if (t.id === "bkfile") { restoreBackup(t.files[0]); t.value = ""; }
     if (t.id === "fsub") { S.filters.subject = t.value; renderCalBody(); }
     else if (t.id === "ftype") { S.filters.type = t.value; renderCalBody(); }
     else if (t.id === "icsfile") { impLoad(t.files[0]); }
