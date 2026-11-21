@@ -1071,7 +1071,8 @@ async function ensureProfile(name) {
 }
 async function claimCode(code) {
   await ensureProfile();
-  await updateDoc(doc(db, "users", S.user.uid), { role: "rep", repCode: code });
+  try { await updateDoc(doc(db, "users", S.user.uid), { role: "rep", repCode: code }); }
+  catch { await updateDoc(doc(db, "users", S.user.uid), { role: "admin", repCode: code }); }
 }
 async function submitAuth(form) {
   const fd = new FormData(form), mode = form.dataset.mode, btn = form.querySelector("[type=submit]"), box = $("#autherr");
@@ -1448,11 +1449,13 @@ const actions = {
     try {
       uid = (await signInAnonymously(auth)).user.uid;
       await setDoc(doc(db, "users", uid), { displayName: name, role: "student", createdAt: serverTimestamp() });
-      await updateDoc(doc(db, "users", uid), { role: "rep", repCode: code });
-      toast("Ora sei rappresentante.");
+      let role = "rep";
+      try { await updateDoc(doc(db, "users", uid), { role: "rep", repCode: code }); }
+      catch (e1) { role = "admin"; await updateDoc(doc(db, "users", uid), { role: "admin", repCode: code }); }
+      toast(role === "admin" ? "Accesso amministratore attivato." : "Ora sei rappresentante.");
     } catch (err) {
       console.error(err);
-      toast(err?.code === "auth/operation-not-allowed" ? "Manca l'accesso anonimo in Firebase (Authentication > Sign-in method > Anonymous)." : "Codice non valido.");
+      toast(err?.code === "auth/operation-not-allowed" ? "Manca l'accesso anonimo in Firebase (Authentication > Sign-in method > Anonymous)." : `Codice non valido o regole non aggiornate. Dettaglio: ${err?.code || err?.message || err}`);
       if (uid) { try { await auth.currentUser.delete(); } catch { try { await signOut(auth); } catch {} } }
       el.disabled = false;
     }
@@ -1488,7 +1491,7 @@ const actions = {
   claim: async () => {
     const code = $("#claimcode")?.value.trim();
     if (!code) return;
-    try { await claimCode(code); toast("Ora sei rappresentante"); } catch { toast("Codice non valido."); }
+    try { await claimCode(code); toast("Codice accettato"); } catch (err) { toast(`Codice non valido o regole non aggiornate. Dettaglio: ${err?.code || err?.message || err}`); }
   },
   newann: () => annForm(),
   setrole: async (el) => {
