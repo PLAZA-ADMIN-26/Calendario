@@ -72,6 +72,7 @@ main{max-width:1100px;margin:0 auto;padding:18px 16px}
 .pgh{margin:12px 0 2px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .pstat{flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:700}.pstat.in{background:rgba(34,160,90,.18);color:#1f8f50}.pstat.out{background:rgba(220,60,40,.15);color:#c2410c}
 .uact{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-start;width:100%}.crow{flex-wrap:wrap}.crow .grow{flex:1 1 180px}
+.resbar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px}
 .gate{max-width:440px;margin:40px auto}
 body.gated nav.tabs{display:none}body.gated .content{padding:0 0 40px}
 nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;background:var(--surface);border-top:1px solid var(--border);padding-bottom:env(safe-area-inset-bottom)}
@@ -689,7 +690,7 @@ function filtered() {
 function calBody() {
   const list = filtered();
   if (S.filters.q.trim()) {
-    return `<p class="muted small" style="margin:0 2px 10px">${list.length} risultat${list.length === 1 ? "o" : "i"}</p>${list.length ? list.map((e) => evRow(e, "date")).join("") : empty("search", "Nessun evento corrisponde alla ricerca.")}`;
+    return `<div class="resbar"><p class="muted small" style="margin:0 2px">${list.length} risultat${list.length === 1 ? "o" : "i"}</p>${isAdmin() ? `<button class="btn sm" data-action="personpdf">${ic("download", 15)} Stampa PDF di “${esc(S.filters.q.trim().slice(0, 24))}”</button>` : ""}</div>${list.length ? list.map((e) => evRow(e, "date")).join("") : empty("search", "Nessun evento corrisponde alla ricerca.")}`;
   }
   return { month: monthView, week: weekView, agenda: agendaView }[S.cal](list);
 }
@@ -1711,6 +1712,48 @@ const actions = {
         await saveEvent(e.id, { ...evData(e), ...patch }); toast("Modifica annullata");
       }
     } catch (err) { fail(err); }
+  },
+  personpdf: async () => {
+    const q = S.filters.q.trim(), needle = q.toLowerCase(), t = todayStr();
+    if (!q) return;
+    const all = new Set(["verifica", "compito"]);
+    const list = S.events.filter((e) => lastDay(e) >= t && (!S.filters.subject || e.subjectId === S.filters.subject) && (
+      all.has(e.type) || (e.type === "interrogazione" && [e.title, e.description, e.topics, e.notes, subj(e.subjectId).name, TYPES[e.type]?.label].join(" ").toLowerCase().includes(needle))
+    )).sort(byDay);
+    if (!list.length) { toast("Nessun impegno da stampare."); return; }
+    const J = await loadJsPdf(), pd = new J({ unit: "mm", format: "a4" }), W = 210, M = 12, B = 285;
+    const nInt = list.filter((e) => e.type === "interrogazione").length;
+    pd.setTextColor(30, 30, 30); pd.setFont("helvetica", "bold"); pd.setFontSize(20); pd.text(pdfTxt(`Impegni di ${q.toUpperCase()}`), M, 18);
+    pd.setFont("helvetica", "normal"); pd.setFontSize(10); pd.setTextColor(95, 95, 95);
+    pd.text(pdfTxt(`${cls()} - aggiornato al ${longDate(t)}`), M, 25);
+    pd.text(pdfTxt(`${list.length} impegni: ${nInt} interrogazioni che riguardano “${q}” e tutte le verifiche e i compiti per casa.`), M, 30.5);
+    let y = 38, month = "";
+    list.forEach((e) => {
+      const s = subj(e.subjectId), strong = !!TYPES[e.type]?.strong, whole = all.has(e.type);
+      const lines = pd.splitTextToSize(pdfTxt(e.title), 118), h = Math.max(14, 5 + lines.length * 5 + 6);
+      const mk = e.date.slice(0, 7);
+      if (y + h + (mk !== month ? 9 : 0) > B) { pd.addPage(); y = 16; month = ""; }
+      if (mk !== month) {
+        month = mk; pd.setFont("helvetica", "bold"); pd.setFontSize(10); pd.setTextColor(95, 95, 95);
+        pd.text(pdfTxt(cap(fmt(mk + "-01", { month: "long", year: "numeric" })).toUpperCase()), M, y + 2);
+        pd.setDrawColor(190, 190, 190); pd.setLineWidth(0.3); pd.line(M, y + 4, W - M, y + 4); y += 8;
+      }
+      pd.setFillColor(...tint(s.color, strong ? 0.38 : 0.2)); pd.roundedRect(M, y, W - 2 * M, h - 2, 1.5, 1.5, "F");
+      pd.setFillColor(...hexRgb(s.color)); pd.rect(M, y, 2.2, h - 2, "F");
+      pd.setTextColor(25, 25, 25); pd.setFont("helvetica", "bold"); pd.setFontSize(11.5);
+      lines.forEach((ln, i) => pd.text(ln, M + 6, y + 6 + i * 5));
+      pd.setFont("helvetica", "normal"); pd.setFontSize(9); pd.setTextColor(80, 80, 80);
+      pd.text(pdfTxt(`${s.name} - ${TYPES[e.type].label}${e.time ? " - " + timeRange(e) : ""}`), M + 6, y + 6 + lines.length * 5);
+      const last = lastDay(e), d1 = cap(fmt(e.date, { weekday: "short", day: "numeric", month: "short" }).replace(".", ""));
+      pd.setFont("helvetica", "bold"); pd.setFontSize(11.5); pd.setTextColor(25, 25, 25);
+      pd.text(pdfTxt(last !== e.date ? `${short(e.date)} - ${short(last)}` : d1), W - M - 4, y + 6, { align: "right" });
+      pd.setFont("helvetica", "normal"); pd.setFontSize(8.5); pd.setTextColor(80, 80, 80);
+      if (whole) pd.text("Tutta la classe", W - M - 4, y + 11, { align: "right" });
+      y += h;
+    });
+    const n = pd.getNumberOfPages();
+    for (let i = 1; i <= n; i++) { pd.setPage(i); pd.setFont("helvetica", "normal"); pd.setFontSize(8); pd.setTextColor(120, 120, 120); pd.text(`Pagina ${i} di ${n}`, W / 2, 292, { align: "center" }); }
+    pd.save(`impegni-${pdfTxt(q).replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase()}.pdf`);
   },
   listpdf: async (el) => {
     const l = S.info.find((x) => x.id === el.dataset.id); if (!l) return;
