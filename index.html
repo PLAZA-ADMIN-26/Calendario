@@ -72,6 +72,8 @@ main{max-width:1100px;margin:0 auto;padding:18px 16px}
 .pgh{margin:12px 0 2px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .pstat{flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:700}.pstat.in{background:rgba(34,160,90,.18);color:#1f8f50}.pstat.out{background:rgba(220,60,40,.15);color:#c2410c}
 .uact{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-start;width:100%}.crow{flex-wrap:wrap}.crow .grow{flex:1 1 180px}
+.picklist{max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:12px;padding:2px 12px}.pick{display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)}.pick:last-child{border-bottom:0}.pick input{width:18px;height:18px;flex:none}
+.rangebar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface);font-size:13px}.rangebar>span{flex:1 1 100%;color:var(--muted)}.rangebar label{display:flex;gap:6px;align-items:center}.rangebar input{width:auto;padding:6px 8px}.rangebar b{margin-left:auto}
 .resbar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px}
 .gate{max-width:440px;margin:40px auto}
 body.gated nav.tabs{display:none}body.gated .content{padding:0 0 40px}
@@ -348,14 +350,14 @@ const configured = !!firebaseConfig.apiKey && !String(firebaseConfig.apiKey).sta
 let loadError = "";
 let initializeApp, getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile, sendPasswordResetEmail, signInAnonymously,
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, onSnapshot, setDoc, updateDoc, addDoc, deleteDoc, writeBatch,
-  query, orderBy, limit, serverTimestamp;
+  query, orderBy, limit, serverTimestamp, where;
 if (configured) {
   try {
     const B = "https://www.gstatic.com/firebasejs/10.14.1/";
     const [a, au, fs] = await Promise.all([import(B + "firebase-app.js"), import(B + "firebase-auth.js"), import(B + "firebase-firestore.js")]);
     ({ initializeApp } = a);
     ({ getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile, sendPasswordResetEmail, signInAnonymously } = au);
-    ({ initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, onSnapshot, setDoc, updateDoc, addDoc, deleteDoc, writeBatch, query, orderBy, limit, serverTimestamp } = fs);
+    ({ initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, onSnapshot, setDoc, updateDoc, addDoc, deleteDoc, writeBatch, query, orderBy, limit, serverTimestamp, where } = fs);
   } catch (e) { loadError = "Impossibile caricare Firebase (controlla la connessione): " + (e && e.message ? e.message : e); }
 }
 
@@ -471,7 +473,7 @@ const VIEWS = ["home", "cal", "notices", "account", "class", "other", "admin"];
 const REP_VIEWS = ["class", "other", "admin"];
 const S = {
   user: null, role: "student", name: "", hasProfile: false,
-  events: [], subjects: [], anns: [], log: [], info: [], openList: "", users: [], codes: [], scodes: [], trash: [], cfg: {}, authReady: false,
+  events: [], subjects: [], anns: [], log: [], info: [], openList: "", shares: [], openShare: "", range: null, users: [], codes: [], scodes: [], trash: [], cfg: {}, authReady: false,
   view: "home", cal: "month", cursor: todayStr(), selected: todayStr(),
   filters: { subject: "", type: "", q: "", past: false }, ntab: "ann",
   loaded: { events: false, subjects: false }, error: "", setup: false,
@@ -643,6 +645,7 @@ function viewHome() {
   return `<div class="hello"><h1>${first ? `Ciao, ${esc(first)}` : esc(cls())}</h1><p>${longDate(t)}</p></div>
   ${imp ? `<section class="card banner">${ic("bell", 20)}<div><span class="eyebrow">Comunicazione importante</span><h3>${esc(imp.title)}</h3>${imp.body ? `<p>${esc(imp.body)}</p>` : ""}</div></section>` : ""}
   ${isAdmin() && S.events.some((e) => occurs(e, addDays(t, 1))) ? `<section class="card banner">${ic("clock", 20)}<div><span class="eyebrow">Domani</span>${S.events.filter((e) => occurs(e, addDays(t, 1))).sort(strongFirst).map((e) => `<p><b>${esc(e.title)}</b> · ${esc(subj(e.subjectId).name)}${e.time ? " · " + esc(timeRange(e)) : ""}</p>`).join("")}</div></section>` : ""}
+  ${shareCards()}
   <div class="grid2"><div>
     ${nextCard}
     ${loadCard()}
@@ -690,7 +693,7 @@ function filtered() {
 function calBody() {
   const list = filtered();
   if (S.filters.q.trim()) {
-    return `<div class="resbar"><p class="muted small" style="margin:0 2px">${list.length} risultat${list.length === 1 ? "o" : "i"}</p>${isAdmin() ? `<button class="btn sm" data-action="personpdf">${ic("download", 15)} Stampa PDF di “${esc(S.filters.q.trim().slice(0, 24))}”</button>` : ""}</div>${list.length ? list.map((e) => evRow(e, "date")).join("") : empty("search", "Nessun evento corrisponde alla ricerca.")}`;
+    return `<div class="resbar"><p class="muted small" style="margin:0 2px">${list.length} risultat${list.length === 1 ? "o" : "i"}</p>${isAdmin() ? `<div class="rangebar"><span>Periodo per PDF, file e invio</span><label>Dal<input type="date" id="rfrom" value="${rng().from}"></label><label>Al<input type="date" id="rto" value="${rng().to}"></label><b>${personList(S.filters.q, S.filters.subject, rng().from, rng().to).length} impegni</b></div><div class="list-actions"><button class="btn sm" data-action="personpdf">${ic("download", 15)} PDF</button><button class="btn sm" data-action="personics">${ic("cal", 15)} Calendario (.ics)</button><button class="btn sm primary" data-action="personsend">${ic("share", 15)} Invia a…</button></div>` : ""}</div>${list.length ? list.map((e) => evRow(e, "date")).join("") : empty("search", "Nessun evento corrisponde alla ricerca.")}`;
   }
   return { month: monthView, week: weekView, agenda: agendaView }[S.cal](list);
 }
@@ -837,6 +840,7 @@ function viewAdmin() {
     <label class="check"><input type="checkbox" name="readOnly" ${cfg.readOnly ? "checked" : ""}> Sola lettura: i rappresentanti non possono modificare</label>
     <div class="sheet-f" style="margin-top:0"><button class="btn primary" type="submit">Salva</button></div></form></section>
   ${asec("Statistiche (verifiche e interrogazioni)", `${subRows.length ? `<h4 class="pgh">Per materia</h4>${subRows.map(([id, n]) => bar(subj(id).name, n, mx, subj(id).color)).join("")}<h4 class="pgh">Per mese</h4>${monRows.map(([k, n]) => bar(cap(fmt(k + "-01", { month: "long", year: "numeric" })), n, mx, "var(--accent)")).join("")}` : '<p class="muted small">Ancora nessun dato.</p>'}`)}
+  ${asec("Impegni inviati", S.shares.length ? S.shares.slice().sort((a, b) => tms(b.createdAt) - tms(a.createdAt)).map((sh) => { const names = sh.to.map((id) => S.users.find((u) => u.id === id)?.displayName).filter(Boolean); return `<div class="crow"><div class="grow"><b>${esc(sh.title)}</b><span>a ${names.length ? esc([...new Set(names)].join(", ")) : sh.to.length + " account"} · ${fdt(sh.createdAt)}</span></div><button class="icon-btn sm" data-action="delshare" data-id="${sh.id}" aria-label="Elimina">${ic("trash", 16)}</button></div>`; }).join("") : '<p class="muted small">Nessun invio. Cerca un nome nel Calendario e premi “Invia a…”.</p>')}
   ${asec("Cestino", S.trash.length ? S.trash.map((x) => `<div class="crow"><div class="grow"><b>${esc(x.title)}</b><span>era previsto il ${short(x.date)} · eliminato ${ago(tms(x.deletedAt) || Date.now())}</span></div><button class="btn sm" data-action="restoretrash" data-id="${x.id}">Ripristina</button></div>`).join("") + `<button class="btn sm" style="margin-top:10px" data-action="emptytrash">Svuota cestino</button>` : '<p class="muted small">Vuoto. Gli eventi eliminati restano qui per 30 giorni.</p>', "")}
   ${asec("Modelli di evento", templates().length ? templates().map((x) => `<div class="crow"><div class="grow"><b>${esc(x.name)}</b><span>${esc(x.title)}${x.time ? " · " + esc(x.time) : ""}</span></div><button class="icon-btn sm" data-action="deltpl" data-id="${x.id}" aria-label="Elimina">${ic("trash", 16)}</button></div>`).join("") : '<p class="muted small">Nessun modello. Crealo dal modulo di un evento (“Salva modello”).</p>')}
   ${asec("Dati", `<div class="list-actions">
@@ -1005,11 +1009,12 @@ function remindTomorrow() {
   notifyChange("Domani", list.map((e) => e.title).slice(0, 4).join(", "));
 }
 function listen() {
-  let unsubProfile = null, unsubInfo = null, unsubAdmin = null, roleKnown = false, touched = false;
+  let unsubProfile = null, unsubInfo = null, unsubAdmin = null, unsubShares = null, sharesMode = null, roleKnown = false, touched = false;
   onAuthStateChanged(auth, (user) => {
     S.user = user; S.authReady = !user; roleKnown = false; touched = false;
     unsubProfile?.(); unsubProfile = null; unsubInfo?.(); unsubInfo = null; S.info = [];
     unsubAdmin?.forEach((u) => u()); unsubAdmin = null; S.users = []; S.codes = []; S.scodes = []; S.trash = [];
+    unsubShares?.(); unsubShares = null; sharesMode = null; S.shares = [];
     stopData();
     if (!user) { S.role = "student"; S.name = ""; S.hasProfile = false; render(); return; }
     S.name = user.displayName || (user.email ? user.email.split("@")[0] : "");
@@ -1025,6 +1030,14 @@ function listen() {
       if (data.displayName) S.name = data.displayName;
       if (!ready) { if (dataOn) stopData(); render(); return; }
       startData();
+      const smode = S.role === "admin" ? "all" : "mine";
+      if (sharesMode !== smode) {
+        unsubShares?.(); sharesMode = smode; let firstS = true;
+        unsubShares = onSnapshot(smode === "all" ? collection(db, "shares") : query(collection(db, "shares"), where("to", "array-contains", user.uid)), (q) => {
+          if (!firstS && smode === "mine" && !q.metadata.fromCache) q.docChanges().forEach((c) => { if (c.type === "added") notifyChange("Per te", c.doc.data().title); });
+          firstS = false; S.shares = mapDocs(q); render();
+        }, () => { S.shares = []; });
+      }
       if (!touched) { touched = true; updateDoc(doc(db, "users", user.uid), { lastSeen: serverTimestamp() }).catch(() => {}); }
       if (S.role === "admin" && !unsubAdmin) unsubAdmin = [
         onSnapshot(collection(db, "users"), (q) => { S.users = mapDocs(q); render(); }, () => {}),
@@ -1714,46 +1727,40 @@ const actions = {
     } catch (err) { fail(err); }
   },
   personpdf: async () => {
-    const q = S.filters.q.trim(), needle = q.toLowerCase(), t = todayStr();
-    if (!q) return;
-    const all = new Set(["verifica", "compito"]);
-    const list = S.events.filter((e) => lastDay(e) >= t && (!S.filters.subject || e.subjectId === S.filters.subject) && (
-      all.has(e.type) || (e.type === "interrogazione" && [e.title, e.description, e.topics, e.notes, subj(e.subjectId).name, TYPES[e.type]?.label].join(" ").toLowerCase().includes(needle))
-    )).sort(byDay);
-    if (!list.length) { toast("Nessun impegno da stampare."); return; }
-    const J = await loadJsPdf(), pd = new J({ unit: "mm", format: "a4" }), W = 210, M = 12, B = 285;
-    const nInt = list.filter((e) => e.type === "interrogazione").length;
-    pd.setTextColor(30, 30, 30); pd.setFont("helvetica", "bold"); pd.setFontSize(20); pd.text(pdfTxt(`Impegni di ${q.toUpperCase()}`), M, 18);
-    pd.setFont("helvetica", "normal"); pd.setFontSize(10); pd.setTextColor(95, 95, 95);
-    pd.text(pdfTxt(`${cls()} - aggiornato al ${longDate(t)}`), M, 25);
-    pd.text(pdfTxt(`${list.length} impegni: ${nInt} interrogazioni che riguardano “${q}” e tutte le verifiche e i compiti per casa.`), M, 30.5);
-    let y = 38, month = "";
-    list.forEach((e) => {
-      const s = subj(e.subjectId), strong = !!TYPES[e.type]?.strong, whole = all.has(e.type);
-      const lines = pd.splitTextToSize(pdfTxt(e.title), 118), h = Math.max(14, 5 + lines.length * 5 + 6);
-      const mk = e.date.slice(0, 7);
-      if (y + h + (mk !== month ? 9 : 0) > B) { pd.addPage(); y = 16; month = ""; }
-      if (mk !== month) {
-        month = mk; pd.setFont("helvetica", "bold"); pd.setFontSize(10); pd.setTextColor(95, 95, 95);
-        pd.text(pdfTxt(cap(fmt(mk + "-01", { month: "long", year: "numeric" })).toUpperCase()), M, y + 2);
-        pd.setDrawColor(190, 190, 190); pd.setLineWidth(0.3); pd.line(M, y + 4, W - M, y + 4); y += 8;
-      }
-      pd.setFillColor(...tint(s.color, strong ? 0.38 : 0.2)); pd.roundedRect(M, y, W - 2 * M, h - 2, 1.5, 1.5, "F");
-      pd.setFillColor(...hexRgb(s.color)); pd.rect(M, y, 2.2, h - 2, "F");
-      pd.setTextColor(25, 25, 25); pd.setFont("helvetica", "bold"); pd.setFontSize(11.5);
-      lines.forEach((ln, i) => pd.text(ln, M + 6, y + 6 + i * 5));
-      pd.setFont("helvetica", "normal"); pd.setFontSize(9); pd.setTextColor(80, 80, 80);
-      pd.text(pdfTxt(`${s.name} - ${TYPES[e.type].label}${e.time ? " - " + timeRange(e) : ""}`), M + 6, y + 6 + lines.length * 5);
-      const last = lastDay(e), d1 = cap(fmt(e.date, { weekday: "short", day: "numeric", month: "short" }).replace(".", ""));
-      pd.setFont("helvetica", "bold"); pd.setFontSize(11.5); pd.setTextColor(25, 25, 25);
-      pd.text(pdfTxt(last !== e.date ? `${short(e.date)} - ${short(last)}` : d1), W - M - 4, y + 6, { align: "right" });
-      pd.setFont("helvetica", "normal"); pd.setFontSize(8.5); pd.setTextColor(80, 80, 80);
-      if (whole) pd.text("Tutta la classe", W - M - 4, y + 11, { align: "right" });
-      y += h;
-    });
-    const n = pd.getNumberOfPages();
-    for (let i = 1; i <= n; i++) { pd.setPage(i); pd.setFont("helvetica", "normal"); pd.setFontSize(8); pd.setTextColor(120, 120, 120); pd.text(`Pagina ${i} di ${n}`, W / 2, 292, { align: "center" }); }
-    pd.save(`impegni-${pdfTxt(q).replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase()}.pdf`);
+    const q = S.filters.q.trim(); if (!q) return;
+    const { from, to } = rng(), list = personList(q, S.filters.subject, from, to);
+    if (!list.length) { toast("Nessun impegno in questo periodo."); return; }
+    await personPdf(q, list, from, to);
+  },
+  personics: () => {
+    const q = S.filters.q.trim(); if (!q) return;
+    const { from, to } = rng(), list = personList(q, S.filters.subject, from, to);
+    if (!list.length) { toast("Nessun impegno in questo periodo."); return; }
+    downloadIcs(list, `impegni-${pdfTxt(q).replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase()}.ics`);
+  },
+  personsend: () => {
+    const q = S.filters.q.trim(); if (!q) return;
+    const { from, to } = rng(), list = personList(q, S.filters.subject, from, to);
+    if (!list.length) { toast("Nessun impegno in questo periodo."); return; }
+    const groups = new Map();
+    S.users.filter((u) => u.id !== S.user.uid && u.role !== "admin").forEach((u) => { const k = pkey(u.displayName || u.id); (groups.get(k) || groups.set(k, []).get(k)).push(u); });
+    const people = [...groups.values()].map((a) => ({ name: a[0].displayName || "Senza nome", ids: a.map((u) => u.id) })).sort((a, b) => a.name.localeCompare(b.name, "it"));
+    if (!people.length) { toast("Nessun altro è ancora entrato nel sito."); return; }
+    openModal(`<form id="shareform" class="form" data-q="${esc(q)}" data-sub="${esc(S.filters.subject || "")}" data-from="${from}" data-to="${to}"><div class="sheet-h"><h3>Invia a degli studenti</h3><button type="button" class="icon-btn" data-action="closemodal" aria-label="Chiudi">${ic("x")}</button></div>
+      <p class="muted small">${list.length} impegni dal ${short(from)} al ${short(to)}: compariranno nella Home di chi scegli, con PDF e file per il calendario. Restano aggiornati da soli.</p>
+      <label>Titolo<input name="title" maxlength="80" value="Impegni di ${esc(q.toUpperCase())}"></label>
+      <label>Messaggio (facoltativo)<textarea name="note" rows="2" maxlength="300"></textarea></label>
+      <button type="button" class="btn sm" data-action="shareall">Seleziona / deseleziona tutti</button>
+      <div class="picklist">${people.map((p) => `<label class="pick"><input type="checkbox" name="to" value="${p.ids.join(",")}"><span>${esc(p.name)}</span></label>`).join("")}</div>
+      <div class="sheet-f"><span class="spacer"></span><button type="button" class="btn" data-action="closemodal">Annulla</button><button class="btn primary" type="submit">Invia</button></div></form>`);
+  },
+  shareall: () => { const b = $$("#shareform [name=to]"), on = b.some((x) => !x.checked); b.forEach((x) => (x.checked = on)); },
+  shareopen: (el) => { S.openShare = S.openShare === el.dataset.id ? "" : el.dataset.id; render(); },
+  sharepdf: async (el) => { const sh = S.shares.find((x) => x.id === el.dataset.id); if (!sh) return; const l = personList(sh.q, sh.subjectId, sh.from, sh.until); if (!l.length) { toast("Nessun impegno in programma."); return; } await personPdf(sh.q, l, sh.from || todayStr(), sh.until || addDays(todayStr(), 14)); },
+  shareics: (el) => { const sh = S.shares.find((x) => x.id === el.dataset.id); if (!sh) return; const l = personList(sh.q, sh.subjectId, sh.from, sh.until); if (!l.length) { toast("Nessun impegno in programma."); return; } downloadIcs(l, `impegni-${pdfTxt(sh.q).replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase()}.ics`); },
+  delshare: async (el) => {
+    if (!(await ask("Eliminare questo invio?", "Sparirà dalla Home degli studenti."))) return;
+    try { await deleteDoc(doc(db, "shares", el.dataset.id)); } catch (err) { fail(err); }
   },
   listpdf: async (el) => {
     const l = S.info.find((x) => x.id === el.dataset.id); if (!l) return;
@@ -1848,6 +1855,63 @@ const actions = {
   notif: async () => { if ("Notification" in window) { await Notification.requestPermission(); render(); } },
 };
 
+const PERSON_ALL = new Set(["verifica", "compito"]);
+const rng = () => S.range || (S.range = { from: todayStr(), to: addDays(todayStr(), 14) });
+function personList(q, subjectId, from, to) {
+  const needle = String(q).trim().toLowerCase(), f = from || todayStr(), u = to || "9999-12-31";
+  return S.events.filter((e) => lastDay(e) >= f && e.date <= u && (!subjectId || e.subjectId === subjectId) && (
+    PERSON_ALL.has(e.type) || (e.type === "interrogazione" && needle && [e.title, e.description, e.topics, e.notes, subj(e.subjectId).name, TYPES[e.type]?.label].join(" ").toLowerCase().includes(needle))
+  )).sort(byDay);
+}
+async function personPdf(q, list, from, to) {
+  const t = todayStr(), J = await loadJsPdf(), pd = new J({ unit: "mm", format: "a4" }), W = 210, M = 12, B = 285, all = PERSON_ALL;
+  const nInt = list.filter((e) => e.type === "interrogazione").length;
+  pd.setTextColor(30, 30, 30); pd.setFont("helvetica", "bold"); pd.setFontSize(20); pd.text(pdfTxt(`Impegni di ${q.toUpperCase()}`), M, 18);
+  pd.setFont("helvetica", "normal"); pd.setFontSize(10); pd.setTextColor(95, 95, 95);
+  pd.text(pdfTxt(`${cls()} - aggiornato al ${longDate(t)}`), M, 25);
+  pd.setFont("helvetica", "bold"); pd.setTextColor(30, 30, 30); pd.text(pdfTxt(`Periodo: dal ${fmt(from, { day: "numeric", month: "long", year: "numeric" })} al ${fmt(to, { day: "numeric", month: "long", year: "numeric" })}`), M, 30.5);
+  pd.setFont("helvetica", "normal"); pd.setTextColor(95, 95, 95);
+  pd.text(pdfTxt(`${list.length} impegni: ${nInt} interrogazioni che riguardano “${q}” e tutte le verifiche e i compiti per casa.`), M, 35.5);
+  let y = 43, month = "";
+  list.forEach((e) => {
+    const s = subj(e.subjectId), strong = !!TYPES[e.type]?.strong, whole = all.has(e.type);
+    const lines = pd.splitTextToSize(pdfTxt(e.title), 118), h = Math.max(14, 5 + lines.length * 5 + 6);
+    const mk = e.date.slice(0, 7);
+    if (y + h + (mk !== month ? 9 : 0) > B) { pd.addPage(); y = 16; month = ""; }
+    if (mk !== month) {
+      month = mk; pd.setFont("helvetica", "bold"); pd.setFontSize(10); pd.setTextColor(95, 95, 95);
+      pd.text(pdfTxt(cap(fmt(mk + "-01", { month: "long", year: "numeric" })).toUpperCase()), M, y + 2);
+      pd.setDrawColor(190, 190, 190); pd.setLineWidth(0.3); pd.line(M, y + 4, W - M, y + 4); y += 8;
+    }
+    pd.setFillColor(...tint(s.color, strong ? 0.38 : 0.2)); pd.roundedRect(M, y, W - 2 * M, h - 2, 1.5, 1.5, "F");
+    pd.setFillColor(...hexRgb(s.color)); pd.rect(M, y, 2.2, h - 2, "F");
+    pd.setTextColor(25, 25, 25); pd.setFont("helvetica", "bold"); pd.setFontSize(11.5);
+    lines.forEach((ln, i) => pd.text(ln, M + 6, y + 6 + i * 5));
+    pd.setFont("helvetica", "normal"); pd.setFontSize(9); pd.setTextColor(80, 80, 80);
+    pd.text(pdfTxt(`${s.name} - ${TYPES[e.type].label}${e.time ? " - " + timeRange(e) : ""}`), M + 6, y + 6 + lines.length * 5);
+    const last = lastDay(e), d1 = cap(fmt(e.date, { weekday: "short", day: "numeric", month: "short" }).replace(".", ""));
+    pd.setFont("helvetica", "bold"); pd.setFontSize(11.5); pd.setTextColor(25, 25, 25);
+    pd.text(pdfTxt(last !== e.date ? `${short(e.date)} - ${short(last)}` : d1), W - M - 4, y + 6, { align: "right" });
+    pd.setFont("helvetica", "normal"); pd.setFontSize(8.5); pd.setTextColor(80, 80, 80);
+    if (whole) pd.text("Tutta la classe", W - M - 4, y + 11, { align: "right" });
+    y += h;
+  });
+  const n = pd.getNumberOfPages();
+  for (let i = 1; i <= n; i++) { pd.setPage(i); pd.setFont("helvetica", "normal"); pd.setFontSize(8); pd.setTextColor(120, 120, 120); pd.text(`Pagina ${i} di ${n}`, W / 2, 292, { align: "center" }); }
+  pd.save(`impegni-${pdfTxt(q).replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase()}.pdf`);
+}
+function shareCards() {
+  if (isAdmin() || !S.shares.length) return "";
+  return S.shares.slice().sort((a, b) => tms(b.createdAt) - tms(a.createdAt)).map((sh) => {
+    const list = personList(sh.q, sh.subjectId, sh.from, sh.until), open = S.openShare === sh.id, shown = open ? list : list.slice(0, 4);
+    return `<section class="card sharecard"><span class="eyebrow">Per te</span><h3 style="margin:2px 0 6px">${esc(sh.title)}</h3>${sh.from && sh.until ? `<p class="muted small" style="margin:0 0 8px">Dal ${short(sh.from)} al ${short(sh.until)}</p>` : ""}
+      ${sh.note ? `<p style="margin:0 0 10px">${esc(sh.note)}</p>` : ""}
+      ${list.length ? shown.map((e) => evRow(e, "date")).join("") : '<p class="muted small">Nessun impegno in programma.</p>'}
+      ${list.length > 4 ? `<button class="btn sm" style="margin-top:8px" data-action="shareopen" data-id="${sh.id}">${open ? "Mostra meno" : `Mostra tutti (${list.length})`}</button>` : ""}
+      ${list.length ? `<div class="list-actions" style="margin-top:12px"><button class="btn sm" data-action="sharepdf" data-id="${sh.id}">${ic("download", 15)} PDF</button><button class="btn sm" data-action="shareics" data-id="${sh.id}">${ic("cal", 15)} Aggiungi al calendario</button></div>
+      <p class="muted small" style="margin:8px 0 0">Il file si apre con Google Calendar, Apple Calendario e Outlook.</p>` : ""}</section>`;
+  }).join("");
+}
 function backupDownload() {
   const clean = (l) => l.map((x) => JSON.parse(JSON.stringify(x, (k, v) => (v && typeof v === "object" && typeof v.toMillis === "function" ? v.toMillis() : v))));
   const data = { creato: new Date().toISOString(), eventi: clean(S.events), materie: clean(S.subjects), comunicazioni: clean(S.anns), classe: clean(S.info) };
@@ -1900,6 +1964,12 @@ function bind() {
       const items = l.items.map((x, k) => { if (k !== i) return x; const { note, ...rest } = x; return v ? { ...rest, note: v } : rest; });
       updateDoc(doc(db, "classinfo", l.id), { items }).then(() => { closeModal(); toast("Nota salvata"); }).catch(fail);
     }
+    else if (f.id === "shareform") {
+      const fd = new FormData(f), to = [...new Set(fd.getAll("to").flatMap((v) => String(v).split(",")))];
+      if (!to.length) { toast("Scegli almeno una persona."); return; }
+      addDoc(collection(db, "shares"), { title: String(fd.get("title") || "").trim() || "Impegni", note: String(fd.get("note") || "").trim(), q: f.dataset.q, subjectId: f.dataset.sub, from: f.dataset.from, until: f.dataset.to, to, createdBy: S.user.uid, createdAt: serverTimestamp() })
+        .then(() => { closeModal(); toast(`Inviato a ${to.length === 1 ? "1 account" : to.length + " account"}`); }).catch(fail);
+    }
     else if (f.id === "siteform") {
       const fd = new FormData(f);
       setDoc(doc(db, "config", "site"), { className: String(fd.get("className") || "").trim(), accent: String(fd.get("accent") || ""), banner: String(fd.get("banner") || "").trim(), readOnly: fd.get("readOnly") === "on" }, { merge: true })
@@ -1950,6 +2020,11 @@ function bind() {
   document.addEventListener("change", async (e) => {
     const t = e.target;
     if (t.closest?.("#evform") && (t.name === "date" || t.name === "type" || t.name === "endDate")) updateLoadHint(t.closest("form"));
+    if (t.id === "rfrom" || t.id === "rto") {
+      const r = rng(); if (t.value) r[t.id === "rfrom" ? "from" : "to"] = t.value;
+      if (r.to < r.from) { if (t.id === "rfrom") r.to = r.from; else r.from = r.to; }
+      renderCalBody(); return;
+    }
     if (t.name === "tplsel") fillTpl(t.closest("form"), t.value);
     if (t.id === "bkfile") { restoreBackup(t.files[0]); t.value = ""; }
     if (t.id === "fsub") { S.filters.subject = t.value; renderCalBody(); }
