@@ -475,6 +475,7 @@ const S = {
   filters: { subject: "", type: "", q: "", past: false }, ntab: "ann",
   loaded: { events: false, subjects: false }, error: "", setup: false,
 };
+Object.defineProperty(S, "log", { configurable: true, get() { return (S.logAll || []).filter((l) => isAdmin() || !l.byAdmin); }, set(v) { S.logAll = v; } });
 const cls = () => S.cfg.className || CLASS_NAME;
 const isRep = () => (S.role === "admin" || (S.role === "rep" && !S.cfg.readOnly)) && !!S.user;
 const isAdmin = () => S.role === "admin" && !!S.user;
@@ -746,7 +747,7 @@ function viewNotices() {
     <h3>${esc(a.title)}</h3>${a.body ? `<p class="pre">${esc(a.body)}</p>` : ""}</article>`).join("");
   return `<div class="page-h"><h1>Avvisi</h1>${isRep() && tab === "ann" ? `<button class="btn primary" data-action="newann">${ic("plus", 16)} Nuova</button>` : ""}</div>
   <div class="seg" style="margin-bottom:16px"><button class="${tab === "ann" ? "on" : ""}" data-action="ntab" data-v="ann">Comunicazioni</button><button class="${tab === "log" ? "on" : ""}" data-action="ntab" data-v="log">Storico modifiche</button></div>
-  ${tab === "ann" ? anns || empty("bell", "Nessuna comunicazione pubblicata.") : `<section class="card">${S.log.length ? S.log.map((l) => logRow(l, true)).join("") : empty("clock", "Ancora nessuna modifica registrata.")}</section>`}`;
+  ${tab === "ann" ? anns || empty("bell", "Nessuna comunicazione pubblicata.") : `<section class="card">${S.log.length ? S.log.map((l) => logRow(l, true)).join("") : empty("clock", "Ancora nessuna modifica registrata.")}</section>${isAdmin() && S.log.length ? `<button class="btn danger" data-action="clearlog">${ic("trash", 16)} Cancella tutto lo storico</button>` : ""}`}`;
 }
 
 const lists = () => S.info.filter((x) => x.kind === "list").sort((a, b) => ms(a.createdAt) - ms(b.createdAt));
@@ -989,7 +990,7 @@ function startData() {
   sub(query(collection(db, "changelog"), orderBy("at", "desc"), limit(100)), (s) => {
     if (!firstL && !s.metadata.fromCache) s.docChanges().forEach((c) => {
       const l = c.doc.data();
-      if (c.type === "added" && !c.doc.metadata.hasPendingWrites && l.userId !== S.user?.uid && ms(l.at) > Date.now() - 12e4) notifyChange("Calendario aggiornato", logText(l).text);
+      if (c.type === "added" && !c.doc.metadata.hasPendingWrites && !l.byAdmin && l.userId !== S.user?.uid && ms(l.at) > Date.now() - 12e4) notifyChange("Calendario aggiornato", logText(l).text);
     });
     firstL = false; S.log = mapDocs(s); render();
   }, err);
@@ -1058,7 +1059,7 @@ async function saveEvent(id, data) {
   const batch = writeBatch(db), now = serverTimestamp();
   if (old) batch.update(ref, { ...data, updatedAt: now });
   else batch.set(ref, { ...data, createdBy: S.user.uid, createdAt: now, updatedAt: now });
-  batch.set(doc(collection(db, "changelog")), {
+  batch.set(doc(collection(db, "changelog")), { byAdmin: isAdmin(),
     eventId: ref.id, title: data.title, type: data.type, subjectId: data.subjectId || "", date: data.date,
     action: !old ? "created" : diff.date ? "moved" : "updated", details: diff, userId: S.user.uid, userName: S.name, at: now,
   });
@@ -1071,7 +1072,7 @@ async function deleteEvent(id) {
   const batch = writeBatch(db);
   batch.delete(doc(db, "events", id));
   batch.set(doc(db, "trash", id), { ...evData(e), deletedAt: serverTimestamp(), deletedBy: S.user.uid });
-  batch.set(doc(collection(db, "changelog")), {
+  batch.set(doc(collection(db, "changelog")), { byAdmin: isAdmin(),
     eventId: id, title: e.title, type: e.type, subjectId: e.subjectId || "", date: e.date,
     action: "deleted", details: {}, userId: S.user.uid, userName: S.name, at: serverTimestamp(),
   });
@@ -1083,7 +1084,7 @@ async function restoreTrash(id) {
   const b = writeBatch(db), now = serverTimestamp();
   b.set(doc(db, "events", id), { ...evData(t), createdBy: S.user.uid, createdAt: now, updatedAt: now });
   b.delete(doc(db, "trash", id));
-  b.set(doc(collection(db, "changelog")), { eventId: id, title: t.title, type: t.type, subjectId: t.subjectId || "", date: t.date, action: "created", details: {}, userId: S.user.uid, userName: S.name, at: now });
+  b.set(doc(collection(db, "changelog")), { byAdmin: isAdmin(), eventId: id, title: t.title, type: t.type, subjectId: t.subjectId || "", date: t.date, action: "created", details: {}, userId: S.user.uid, userName: S.name, at: now });
   await b.commit();
 }
 async function moveEvent(id, date, canUndo = true) {
@@ -1169,7 +1170,7 @@ async function submitEvent(form) {
     try {
       const b = writeBatch(db), now = serverTimestamp();
       dates.forEach((d) => b.set(doc(collection(db, "events")), { ...data, date: d, endDate: data.endDate ? addDays(data.endDate, diffDays(d, data.date)) : "", createdBy: S.user.uid, createdAt: now, updatedAt: now }));
-      b.set(doc(collection(db, "changelog")), { eventId: "", title: data.title, type: data.type, subjectId: data.subjectId || "", date: data.date, action: "created", details: { repeat: dates.length }, userId: S.user.uid, userName: S.name, at: now });
+      b.set(doc(collection(db, "changelog")), { byAdmin: isAdmin(), eventId: "", title: data.title, type: data.type, subjectId: data.subjectId || "", date: data.date, action: "created", details: { repeat: dates.length }, userId: S.user.uid, userName: S.name, at: now });
       await b.commit();
       S.selected = data.date; S.cursor = data.date; closeModal(); render(); toast(`Creati ${dates.length} eventi`);
     } catch (err) { btn.disabled = false; fail(err); }
@@ -1628,7 +1629,7 @@ const actions = {
         }));
         await b.commit();
       }
-      await addDoc(collection(db, "changelog"), { eventId: "", title: "Importazione", type: "altro", subjectId: "", date: todayStr(), action: "created", details: { import: rows.length }, userId: S.user.uid, userName: S.name, at: serverTimestamp() });
+      await addDoc(collection(db, "changelog"), { byAdmin: isAdmin(), eventId: "", title: "Importazione", type: "altro", subjectId: "", date: todayStr(), action: "created", details: { import: rows.length }, userId: S.user.uid, userName: S.name, at: serverTimestamp() });
       closeModal();
       toast(`Importati ${rows.length} eventi`);
     } catch (err) { el.disabled = false; fail(err); }
@@ -1673,6 +1674,16 @@ const actions = {
   delcode: async (el) => {
     if (!(await ask("Eliminare il codice?", "Nessuno potrà più usarlo per entrare."))) return;
     try { await deleteDoc(doc(db, el.dataset.col, el.dataset.id)); } catch (err) { fail(err); }
+  },
+  clearlog: async () => {
+    if (!(await ask("Cancellare tutto lo storico?", "Le modifiche registrate spariranno per tutti e non potrai più annullarle da qui.", "Cancella"))) return;
+    try {
+      for (let k = 0; k < 30 && S.logAll.length; k++) {
+        const b = writeBatch(db); S.logAll.slice(0, 400).forEach((l) => b.delete(doc(db, "changelog", l.id)));
+        await b.commit(); await new Promise((r) => setTimeout(r, 700));
+      }
+      toast("Storico cancellato");
+    } catch (err) { fail(err); }
   },
   restoretrash: async (el) => { try { await restoreTrash(el.dataset.id); toast("Evento ripristinato"); } catch (err) { fail(err); } },
   emptytrash: async () => {
