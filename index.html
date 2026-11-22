@@ -94,7 +94,8 @@ nav.tabs button.on::before{content:"";position:absolute;top:0;left:30%;right:30%
 .icon-btn:hover{background:var(--surface-2);color:var(--text)}
 .icon-btn.sm{width:30px;height:30px;border-radius:9px}
 .avatar{flex:none;box-sizing:border-box;width:34px;height:34px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;font-weight:650;line-height:1;padding:0;display:inline-flex;align-items:center;justify-content:center;text-align:center;cursor:pointer}
-.avatar.lg{width:46px;height:46px;font-size:15px;cursor:default;background:var(--accent-soft);color:var(--accent)}
+.qwrap{position:relative}.qwrap input{padding-right:38px}.qwrap input::-webkit-search-cancel-button{-webkit-appearance:none;display:none}.qx{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:30px;height:30px;border:0;border-radius:50%;background:transparent;color:var(--muted);display:grid;place-items:center;cursor:pointer}.qx[hidden]{display:none}.qx:hover{background:var(--surface-2)}
+.avatar.big{width:46px;height:46px;font-size:15px;cursor:default;background:var(--accent-soft);color:var(--accent)}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:40px;padding:0 15px;border-radius:11px;border:1px solid var(--border);background:var(--surface);cursor:pointer;font-weight:550;text-decoration:none;color:var(--text);transition:background .15s,transform .1s}
 .btn:hover{background:var(--surface-2)}.btn:active{transform:scale(.98)}
 .btn.sm{min-height:32px;padding:0 11px;font-size:13px;border-radius:9px}
@@ -167,8 +168,8 @@ label input,label select,label textarea{color:var(--text);font-weight:400}
 .toolbar .nav{display:flex;align-items:center;gap:4px}
 .toolbar h2{min-width:150px;text-align:center;font-size:17px}
 .filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
-.filters input{grid-column:1/-1}
-@media(min-width:700px){.filters{grid-template-columns:1fr 200px 200px}.filters input{grid-column:auto}}
+.filters .qwrap{grid-column:1/-1}
+@media(min-width:700px){.filters{grid-template-columns:1fr 200px 200px}.filters .qwrap{grid-column:auto}}
 .month{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:1px;background:var(--border);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow)}
 .dow{background:var(--surface-2);text-align:center;font-size:11px;font-weight:600;padding:7px 0;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .cell{background:var(--surface);min-height:62px;padding:5px 4px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;position:relative;transition:background .12s}
@@ -667,7 +668,7 @@ function viewCalendar() {
     <button class="btn sm" data-action="pdfmonth" title="Scarica il PDF del mese">${ic("download", 15)} PDF<span class="lg">&nbsp;del mese</span></button>
   </div>
   <div class="filters">
-    <input id="q" type="search" placeholder="Cerca eventi, argomenti, materie…" value="${esc(f.q)}" autocomplete="off">
+    <div class="qwrap"><input id="q" type="search" placeholder="Cerca eventi, argomenti, materie…" value="${esc(f.q)}" autocomplete="off"><button type="button" id="qclear" class="qx" data-action="clearq" aria-label="Cancella ricerca" ${f.q ? "" : "hidden"}>${ic("x", 16)}</button></div>
     <select id="fsub" aria-label="Filtra per materia"><option value="">Tutte le materie</option>${S.subjects.map((s) => `<option value="${s.id}" ${f.subject === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>
     <select id="ftype" aria-label="Filtra per tipologia"><option value="">Tutte le tipologie</option>${Object.entries(TYPES).map(([k, v]) => `<option value="${k}" ${f.type === k ? "selected" : ""}>${v.label}</option>`).join("")}</select>
   </div>
@@ -851,8 +852,8 @@ function viewAccount() {
   const initials = (S.name || "?").trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   let h = `<div class="page-h"><h1>Account</h1></div>`;
   h += S.user
-    ? `<section class="card"><div class="who"><div class="avatar lg">${esc(initials)}</div><div><b>${esc(S.name)}</b><div class="muted small">${S.user.email ? esc(S.user.email) : "Accesso con codice"}</div></div>
-        <span class="pill ${isRep() ? "rep" : ""}">${isRep() ? "Rappresentante" : "Studente"}</span></div>
+    ? `<section class="card"><div class="who"><div class="avatar big">${esc(initials)}</div><div><b>${esc(S.name)}</b><div class="muted small">${S.user.email ? esc(S.user.email) : "Accesso con codice"}</div></div>
+        <span class="pill ${isRep() ? "rep" : ""}">${isAdmin() ? "Amministratore" : isRep() ? "Rappresentante" : "Studente"}</span></div>
        ${!isRep() ? `<div class="claim"><label>Sei un rappresentante di classe?<div class="inline"><input id="claimcode" placeholder="Codice rappresentante" autocomplete="off"><button class="btn" data-action="claim">Attiva</button></div></label></div>` : ""}
        <button class="btn" data-action="logout">Esci</button>${S.user.isAnonymous ? '<p class="muted small" style="margin-top:8px">Se esci o cancelli i dati del browser, dovrai reinserire il codice.</p>' : ""}</section>`
     : `<section class="card"><h3>Sei un rappresentante di classe?</h3><p class="muted" style="margin:6px 0 12px">Gli studenti non devono fare nulla: il calendario si consulta senza accedere. Se sei un rappresentante, scrivi il tuo nome e il codice per poter modificare.</p><div class="form"><label>Il tuo nome<input id="repname" maxlength="60" autocomplete="name" placeholder="Es. Giulia"></label><label>Codice rappresentante<div class="inline"><input id="repcode" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="btn primary" data-action="repenter">Entra</button></div></label></div></section>`;
@@ -1560,6 +1561,7 @@ const actions = {
   mode: (el) => { S.cal = el.dataset.mode; if (S.cal === "week") S.cursor = S.selected; render(); },
   past: (el) => { S.filters.past = el.dataset.v === "1"; renderCalBody(); },
   ntab: (el) => { S.ntab = el.dataset.v; render(); },
+  clearq: () => { S.filters.q = ""; const q = $("#q"); if (q) { q.value = ""; q.focus(); } $("#qclear")?.setAttribute("hidden", ""); renderCalBody(); },
   search: () => { S.view = "cal"; go("cal"); setTimeout(() => $("#q")?.focus(), 60); },
   toggletheme: () => { localStorage.setItem("theme", document.documentElement.dataset.theme === "dark" ? "light" : "dark"); applyTheme(); render(); },
   settheme: (el) => { localStorage.setItem("theme", el.dataset.v); applyTheme(); render(); },
@@ -1869,7 +1871,7 @@ function bind() {
     }
   });
   document.addEventListener("input", (e) => {
-    if (e.target.id === "q") { S.filters.q = e.target.value; renderCalBody(); }
+    if (e.target.id === "q") { S.filters.q = e.target.value; $("#qclear")?.toggleAttribute("hidden", !e.target.value); renderCalBody(); }
   });
   document.addEventListener("change", async (e) => {
     const t = e.target;
