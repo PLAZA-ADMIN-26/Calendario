@@ -271,6 +271,7 @@ label input,label select,label textarea{color:var(--text);font-weight:400}
 fieldset{border:1px solid var(--border);border-radius:12px;padding:10px 12px 12px;margin:0}
 legend{font-size:13px;font-weight:550;color:var(--muted);padding:0 6px}
 .linkrow{display:flex;gap:6px;margin-bottom:8px}
+.tplrow{display:flex;gap:6px;margin-bottom:8px}.tplrow input{flex:1}
 .linkrow input:first-child{flex:.8}.linkrow input:nth-child(2){flex:1.2}
 .detail h2{font-size:22px;margin:4px 0 6px}
 .detail .tag{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:650;padding:3px 11px 3px 9px;border-radius:99px;background:color-mix(in srgb,var(--c) 18%,var(--surface));border:1px solid color-mix(in srgb,var(--c) 40%,var(--border))}
@@ -504,7 +505,7 @@ function toast(msg, actionLabel, action) {
 }
 const fail = (err) => {
   console.error(err);
-  toast(err?.code === "permission-denied" ? "Operazione non consentita: solo i rappresentanti possono modificare." : `Errore: ${err?.message || err}`);
+  toast(err?.code === "permission-denied" ? `Operazione non consentita (permission-denied). Ruolo letto dal sito: ${S.role}. Controlla le regole Firestore e il ruolo del tuo account.` : `Errore: ${err?.message || err}`);
 };
 
 let modalEl = null, pendingAsk = null;
@@ -818,6 +819,7 @@ function viewAdmin() {
   const mx = Math.max(1, ...subRows.map((r) => r[1]), ...monRows.map((r) => r[1]));
   const cfg = S.cfg;
   return `<div class="page-h"><h1>Amministratore</h1><span class="pill rep">Solo tu</span></div>
+  <p class="muted small" style="margin:-6px 0 12px;overflow-wrap:anywhere">ID account: <code>${esc(me || "")}</code> (in Firebase: Firestore → users → questo ID, il campo role deve essere “admin”)</p>
   ${asec("Panoramica", `<div class="stats" style="grid-template-columns:repeat(2,1fr)">
     <div class="stat"><b>${S.events.length}</b><span>eventi (${past} passati)</span></div><div class="stat"><b>${S.anns.length}</b><span>comunicazioni</span></div>
     <div class="stat"><b>${S.users.filter((u) => u.role !== "student").length}</b><span>con permessi di modifica</span></div><div class="stat"><b>${S.users.length}</b><span>accessi registrati</span></div></div>`)}
@@ -1133,7 +1135,7 @@ function eventForm(ev, presetDate) {
     <label>Argomenti da preparare<textarea name="topics" rows="2">${esc(e.topics)}</textarea></label>
     <label>Note aggiuntive<textarea name="notes" rows="2">${esc(e.notes)}</textarea></label>
     <fieldset><legend>Allegati e link</legend><div id="links">${(e.links || []).map(linkRow).join("")}</div><button type="button" class="btn sm" data-action="addlink">${ic("plus", 15)} Aggiungi link</button></fieldset>
-    ${isAdmin() ? `<div class="linkrow"><input name="tplname" placeholder="Nome del modello" maxlength="60"><button type="button" class="btn sm" data-action="savetpl">Salva modello</button></div>` : ""}
+    ${isAdmin() ? `<div class="tplrow"><input name="tplname" placeholder="Nome del modello" maxlength="60"><button type="button" class="btn sm" data-action="savetpl">Salva modello</button></div>` : ""}
     <div class="sheet-f">${ev ? `<button type="button" class="btn danger" data-action="del" data-id="${ev.id}">${ic("trash", 16)} Elimina</button>` : ""}<span class="spacer"></span><button type="button" class="btn" data-action="closemodal">Annulla</button><button class="btn primary" type="submit">Salva</button></div>
   </form>`, (sheet) => updateLoadHint(sheet.querySelector("#evform")));
 }
