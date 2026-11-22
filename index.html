@@ -55,6 +55,7 @@ header.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:
 main{max-width:1100px;margin:0 auto;padding:18px 16px}
 .lhead{display:flex;align-items:center;gap:10px;width:100%;background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;cursor:pointer}.lt{flex:1;display:flex;flex-direction:column}.lpct{font-weight:700;color:var(--accent)}
 .lbar{height:6px;border-radius:9px;background:var(--surface-2);margin:10px 0 4px;overflow:hidden}.lbar i{display:block;height:100%;background:var(--accent)}
+.litem{border-bottom:1px solid var(--border)}.lline{display:flex;align-items:center;gap:4px}.litem .lrow{border-bottom:0;flex:1}.hasnote{color:var(--accent)}.lnotetxt{margin:-4px 0 10px 34px;font-size:13px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
 .lrow{display:flex;align-items:center;gap:12px;width:100%;background:none;border:0;border-bottom:1px solid var(--border);padding:11px 2px;color:inherit;font:inherit;text-align:left;cursor:pointer}
 .lbox{flex:none;width:22px;height:22px;border-radius:7px;border:2px solid var(--muted);display:grid;place-items:center}.lrow.ok .lbox{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .lrow .lstat{margin-left:auto;font-size:12px;color:var(--muted)}.lrow.ok{color:var(--muted)}.lrow:not(.ok) .lstat{color:#c2410c;font-weight:600}
@@ -754,7 +755,7 @@ function listCard(l) {
   return `<section class="card lcard">
     <button class="lhead" data-action="openlist" data-id="${l.id}" aria-expanded="${open}"><span class="lt"><b>${esc(l.name)}</b><span class="muted small">${done} su ${it.length} · mancano ${it.length - done}</span></span><span class="lpct">${pct}%</span></button>
     <div class="lbar"><i style="width:${pct}%"></i></div>
-    ${open ? `<div class="lbody">${it.map((x, i) => `<button class="lrow ${x.d ? "ok" : ""}" data-action="tick" data-id="${l.id}" data-i="${i}"><span class="lbox">${x.d ? ic("check", 14) : ""}</span><span>${esc(x.n)}</span><span class="lstat">${x.d ? "Fatto" : "Manca"}</span></button>`).join("") || '<p class="muted small">Elenco vuoto.</p>'}
+    ${open ? `<div class="lbody">${it.map((x, i) => `<div class="litem"><div class="lline"><button class="lrow ${x.d ? "ok" : ""}" data-action="tick" data-id="${l.id}" data-i="${i}"><span class="lbox">${x.d ? ic("check", 14) : ""}</span><span>${esc(x.n)}</span><span class="lstat">${x.d ? "Fatto" : "Manca"}</span></button><button class="icon-btn sm ${x.note ? "hasnote" : ""}" data-action="note" data-id="${l.id}" data-i="${i}" aria-label="Nota">${ic("edit", 15)}</button></div>${x.note ? `<p class="lnotetxt">${esc(x.note)}</p>` : ""}</div>`).join("") || '<p class="muted small">Elenco vuoto.</p>'}
       <div class="list-actions" style="margin-top:12px">
         <button class="btn sm" data-action="renlist" data-id="${l.id}">${ic("edit", 15)} Rinomina</button>
         <button class="btn sm" data-action="duplist" data-id="${l.id}">${ic("share", 15)} Duplica</button>
@@ -1711,6 +1712,11 @@ const actions = {
       pd.setFont("helvetica", "normal"); pd.setFontSize(12); pd.text(pdfTxt(x.n), 25, y);
       pd.setFont("helvetica", "bold"); pd.setFontSize(9); pd.text(x.d ? "FATTO" : "MANCA", 195, y, { align: "right" });
       y += 9;
+      if (x.note) {
+        pd.setFont("helvetica", "italic"); pd.setFontSize(10);
+        pd.splitTextToSize(pdfTxt("Nota: " + x.note), 165).forEach((ln) => { if (y > 285) { pd.addPage(); y = 20; } pd.text(ln, 25, y - 3.5); y += 4.8; });
+        y += 2;
+      }
     });
     pd.save(`${pdfTxt(l.name).replace(/[^a-zA-Z0-9]+/g, "-")}.pdf`);
   },
@@ -1724,6 +1730,12 @@ const actions = {
     <p class="muted small">Scarica prima un backup se vuoi poterli recuperare.</p>
     <div class="sheet-f"><span class="spacer"></span><button type="button" class="btn" data-action="closemodal">Annulla</button><button class="btn primary" type="submit">Continua</button></div></form>`),
   openlist: (el) => { S.openList = S.openList === el.dataset.id ? "" : el.dataset.id; render(); },
+  note: (el) => {
+    const l = S.info.find((x) => x.id === el.dataset.id), x = l?.items?.[+el.dataset.i]; if (!x) return;
+    openModal(`<form id="noteform" class="form" data-id="${l.id}" data-i="${el.dataset.i}"><div class="sheet-h"><h3>Nota · ${esc(x.n)}</h3><button type="button" class="icon-btn" data-action="closemodal" aria-label="Chiudi">${ic("x")}</button></div>
+      <label>Nota (compare anche nel PDF)<textarea name="v" rows="4" maxlength="300" placeholder="Es. ha dato 2 euro su 3">${esc(x.note || "")}</textarea></label>
+      <div class="sheet-f"><span class="spacer"></span><button type="button" class="btn" data-action="closemodal">Annulla</button><button class="btn primary" type="submit">Salva</button></div></form>`);
+  },
   tick: async (el) => {
     const l = S.info.find((x) => x.id === el.dataset.id); if (!l) return;
     const items = l.items.map((x, i) => (i === +el.dataset.i ? { ...x, d: !x.d } : x));
@@ -1825,6 +1837,12 @@ function bind() {
     else if (f.id === "codeform") {
       const fd = new FormData(f), v = String(fd.get("v")).trim().replace(/\//g, ""), days = +fd.get("exp");
       setDoc(doc(db, String(fd.get("col")), v), { attivo: true, creato: serverTimestamp(), scade: days ? Date.now() + days * 864e5 : 0 }).then(() => { closeModal(); toast("Codice creato"); }).catch(fail);
+    }
+    else if (f.id === "noteform") {
+      const l = S.info.find((x) => x.id === f.dataset.id); if (!l) return;
+      const v = String(new FormData(f).get("v") || "").trim(), i = +f.dataset.i;
+      const items = l.items.map((x, k) => { if (k !== i) return x; const { note, ...rest } = x; return v ? { ...rest, note: v } : rest; });
+      updateDoc(doc(db, "classinfo", l.id), { items }).then(() => { closeModal(); toast("Nota salvata"); }).catch(fail);
     }
     else if (f.id === "siteform") {
       const fd = new FormData(f);
